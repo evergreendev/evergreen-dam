@@ -15,6 +15,9 @@ const dirname = path.dirname(filename)
 export default buildConfig({
   admin: {
     user: Users.slug,
+    components:{
+
+    },
     importMap: {
       baseDir: path.resolve(dirname),
     },

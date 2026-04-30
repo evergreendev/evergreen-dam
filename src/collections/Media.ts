@@ -1,4 +1,9 @@
+import { readFile } from 'fs/promises'
+import path from 'path'
 import { addDataAndFileToRequest, type CollectionConfig, type PayloadRequest } from 'payload'
+
+import type { Media as MediaType } from '@/payload-types'
+import { createZip } from '@/util/createZip'
 
 const getStringValues = (...values: unknown[]) => {
   const strings = values.flatMap((value) => {
@@ -12,7 +17,9 @@ const getStringValues = (...values: unknown[]) => {
 
     if (Array.isArray(value)) {
       return value
-        .filter((item): item is number | string => typeof item === 'number' || typeof item === 'string')
+        .filter(
+          (item): item is number | string => typeof item === 'number' || typeof item === 'string',
+        )
         .map((item) => String(item))
     }
 
@@ -73,6 +80,14 @@ const getMediaFolderID = async (req: PayloadRequest, folderName: string) => {
   return createdFolder.id
 }
 
+const getUploadFileCopy = (file: NonNullable<PayloadRequest['file']>) => ({
+  data: Buffer.from(file.data),
+  mimetype: file.mimetype,
+  name: file.name,
+  size: file.size,
+  ...(file.tempFilePath ? { tempFilePath: file.tempFilePath } : {}),
+})
+
 export const Media: CollectionConfig = {
   slug: 'media',
   access: {
@@ -82,6 +97,9 @@ export const Media: CollectionConfig = {
     update: ({ req }) => Boolean(req.user),
   },
   admin: {
+    components: {
+      beforeListTable: ['/components/DownloadSelectedMediaButton#DownloadSelectedMediaButton'],
+    },
     defaultColumns: ['filename', 'alt', 'photoCredit', 'publications', 'createdAt'],
   },
   endpoints: [
@@ -104,12 +122,20 @@ export const Media: CollectionConfig = {
         let folderID: number | undefined
 
         if (publicationIDs === null) {
-          return Response.json({ message: 'One or more publications are not available for uploads.' }, { status: 400 })
+          return Response.json(
+            { message: 'One or more publications are not available for uploads.' },
+            { status: 400 },
+          )
         }
+
+        const publicationFolderIDs = new Map<number, number>()
 
         if (publicationIDs.length > 0) {
           if (publicationIDs.length !== publicationValues.length) {
-            return Response.json({ message: 'That publication is not available for uploads.' }, { status: 400 })
+            return Response.json(
+              { message: 'That publication is not available for uploads.' },
+              { status: 400 },
+            )
           }
 
           const publications = await req.payload.find({
@@ -138,29 +164,54 @@ export const Media: CollectionConfig = {
           })
 
           if (publications.docs.length !== publicationIDs.length) {
-            return Response.json({ message: 'One or more publications are not available for uploads.' }, { status: 400 })
+            return Response.json(
+              { message: 'One or more publications are not available for uploads.' },
+              { status: 400 },
+            )
           }
 
-          const folderPublication =
-            publications.docs.find((publication) => publication.id === publicationIDs[0]) ?? publications.docs[0]
+          for (const publication of publications.docs) {
+            publicationFolderIDs.set(publication.id, await getMediaFolderID(req, publication.title))
+          }
 
-          folderID = await getMediaFolderID(req, folderPublication.title)
+          folderID = publicationFolderIDs.get(publicationIDs[0])
         }
 
-        const result = await req.payload.create({
-          collection: 'media',
-          data: {
-            alt:
-              typeof req.data?.alt === 'string' && req.data.alt.trim()
-                ? req.data.alt
-                : req.file.name,
-            ...(folderID ? { folder: folderID } : {}),
-            photoCredit: typeof req.data?.photoCredit === 'string' ? req.data.photoCredit.trim() : '',
-            publications: publicationIDs,
-          },
-          file: req.file,
-          req,
-        })
+        const baseData = {
+          alt:
+            typeof req.data?.alt === 'string' && req.data.alt.trim() ? req.data.alt : req.file.name,
+          photoCredit: typeof req.data?.photoCredit === 'string' ? req.data.photoCredit.trim() : '',
+        }
+        const mediaToCreate =
+          publicationIDs.length > 1
+            ? publicationIDs.map((publicationID) => ({
+                folder: publicationFolderIDs.get(publicationID),
+                publications: [publicationID],
+              }))
+            : [
+                {
+                  folder: folderID,
+                  publications: publicationIDs,
+                },
+              ]
+        const results: MediaType[] = []
+
+        for (const mediaData of mediaToCreate) {
+          const result = await req.payload.create({
+            collection: 'media',
+            data: {
+              ...baseData,
+              ...(mediaData.folder ? { folder: mediaData.folder } : {}),
+              publications: mediaData.publications,
+            },
+            file: results.length === 0 ? req.file : getUploadFileCopy(req.file),
+            req,
+          })
+
+          results.push(result)
+        }
+
+        const [result] = results
 
         return Response.json({
           id: result.id,
@@ -168,7 +219,94 @@ export const Media: CollectionConfig = {
           filename: result.filename,
           photoCredit: result.photoCredit,
           publications: result.publications,
+          files: results.map((createdMedia) => ({
+            id: createdMedia.id,
+            filename: createdMedia.filename,
+            publications: createdMedia.publications,
+            url: createdMedia.url,
+          })),
           url: result.url,
+        })
+      },
+    },
+    {
+      path: '/download-selected',
+      method: 'get',
+      handler: async (req) => {
+        if (!req.user) {
+          return Response.json({ message: 'Unauthorized' }, { status: 401 })
+        }
+
+        const url = new URL(
+          req.url ?? '',
+          process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:3000',
+        )
+        const ids = url.searchParams
+          .get('ids')
+          ?.split(',')
+          .map((id) => id.trim())
+          .filter(Boolean)
+
+        if (!ids || ids.length === 0) {
+          return Response.json(
+            { message: 'Select at least one media item to download.' },
+            { status: 400 },
+          )
+        }
+
+        const numericIDs = ids.map((id) => Number(id))
+
+        if (numericIDs.some((id) => !Number.isFinite(id))) {
+          return Response.json(
+            { message: 'One or more selected media IDs are invalid.' },
+            { status: 400 },
+          )
+        }
+
+        const media = await req.payload.find({
+          collection: 'media',
+          depth: 0,
+          limit: ids.length,
+          req,
+          where: {
+            id: {
+              in: numericIDs,
+            },
+          },
+        })
+        const entries = (
+          await Promise.all(
+            media.docs
+              .filter((doc) => doc.filename)
+              .map(async (doc, index) => {
+                try {
+                  return {
+                    data: await readFile(
+                      path.resolve(process.cwd(), 'media', doc.filename as string),
+                    ),
+                    name:
+                      media.docs.filter((entry) => entry.filename === doc.filename).length > 1
+                        ? `${index + 1}-${doc.filename}`
+                        : (doc.filename as string),
+                  }
+                } catch {
+                  return null
+                }
+              }),
+          )
+        ).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+
+        if (entries.length === 0) {
+          return Response.json({ message: 'No downloadable files were found.' }, { status: 404 })
+        }
+
+        const zip = createZip(entries)
+
+        return new Response(zip, {
+          headers: {
+            'Content-Disposition': 'attachment; filename="media-download.zip"',
+            'Content-Type': 'application/zip',
+          },
         })
       },
     },
