@@ -17,7 +17,7 @@ export const Publications: CollectionConfig = {
     update: ({ req }) => Boolean(req.user),
   },
   admin: {
-    defaultColumns: ['title', 'slug', 'showOnFrontend'],
+    defaultColumns: ['title', 'slug', 'showOnFrontend', 'media'],
     useAsTitle: 'title',
   },
   fields: [
@@ -32,6 +32,16 @@ export const Publications: CollectionConfig = {
       type: 'checkbox',
       defaultValue: true,
       label: 'Show on front end',
+    },
+    {
+      name: 'media',
+      type: 'join',
+      collection: 'media',
+      on: 'publications',
+      admin: {
+        allowCreate: false,
+        defaultColumns: ['filename', 'alt', 'photoCredit', 'createdAt'],
+      },
     },
   ],
 }

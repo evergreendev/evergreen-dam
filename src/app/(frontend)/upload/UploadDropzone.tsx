@@ -6,9 +6,18 @@ type UploadItem = {
   error?: string
   file: File
   id: string
+  isRemoving?: boolean
+  photoCredit: string
   previewUrl: string
-  progress: 'queued' | 'uploading' | 'complete' | 'error'
+  progress: 'ready' | 'uploading' | 'complete' | 'error'
   uploadedUrl?: string | null
+}
+
+type UploadedItem = {
+  fileName: string
+  id: string
+  photoCredit: string
+  previewUrl: string
 }
 
 type PublicationOption = {
@@ -17,10 +26,13 @@ type PublicationOption = {
 }
 
 type UploadDropzoneProps = {
+  fixedPublication?: PublicationOption
   publications: PublicationOption[]
 }
 
 const endpoint = '/api/media/public-upload'
+const removalFadeMS = 450
+const uploadedItemVisibleMS = 2500
 
 const formatBytes = (bytes: number) => {
   if (bytes < 1024 * 1024) {
@@ -33,29 +45,83 @@ const formatBytes = (bytes: number) => {
 const createUploadItem = (file: File): UploadItem => ({
   file,
   id: `${file.name}-${file.size}-${file.lastModified}-${crypto.randomUUID()}`,
+  photoCredit: '',
   previewUrl: URL.createObjectURL(file),
-  progress: 'queued',
+  progress: 'ready',
 })
 
-export function UploadDropzone({ publications }: UploadDropzoneProps) {
+export function UploadDropzone({ fixedPublication, publications }: UploadDropzoneProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const itemsRef = useRef<UploadItem[]>([])
+  const removalTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>[]>>(new Map())
+  const uploadedItemsRef = useRef<UploadedItem[]>([])
   const [isDragging, setIsDragging] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [items, setItems] = useState<UploadItem[]>([])
-  const [selectedPublicationIDs, setSelectedPublicationIDs] = useState<string[]>([])
+  const [uploadedItems, setUploadedItems] = useState<UploadedItem[]>([])
+  const [selectedPublicationIDs, setSelectedPublicationIDs] = useState<string[]>(
+    fixedPublication ? [fixedPublication.id] : [],
+  )
+  const hasPendingItems = items.some((item) => item.progress === 'ready' || item.progress === 'error')
 
   useEffect(() => {
     itemsRef.current = items
   }, [items])
 
   useEffect(() => {
+    uploadedItemsRef.current = uploadedItems
+  }, [uploadedItems])
+
+  useEffect(() => {
     return () => {
+      removalTimersRef.current.forEach((timers) => {
+        timers.forEach((timer) => clearTimeout(timer))
+      })
       itemsRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl))
+      uploadedItemsRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl))
     }
   }, [])
 
   const updateItem = (id: string, updates: Partial<UploadItem>) => {
     setItems((current) => current.map((item) => (item.id === id ? { ...item, ...updates } : item)))
+  }
+
+  const clearRemovalTimers = (id: string) => {
+    const timers = removalTimersRef.current.get(id)
+
+    if (timers) {
+      timers.forEach((timer) => clearTimeout(timer))
+      removalTimersRef.current.delete(id)
+    }
+  }
+
+  const removeItem = (id: string) => {
+    clearRemovalTimers(id)
+    setItems((current) => {
+      const item = current.find((currentItem) => currentItem.id === id)
+
+      if (item) {
+        URL.revokeObjectURL(item.previewUrl)
+      }
+
+      return current.filter((currentItem) => currentItem.id !== id)
+    })
+  }
+
+  const scheduleItemRemoval = (id: string, delay = uploadedItemVisibleMS) => {
+    clearRemovalTimers(id)
+
+    const startTimer = setTimeout(() => {
+      updateItem(id, { isRemoving: true })
+
+      const removeTimer = setTimeout(() => {
+        removeItem(id)
+      }, removalFadeMS)
+      const timers = removalTimersRef.current.get(id) ?? []
+      removalTimersRef.current.set(id, [...timers, removeTimer])
+    }, delay)
+
+    removalTimersRef.current.set(id, [startTimer])
   }
 
   const togglePublication = (publicationID: string) => {
@@ -77,15 +143,15 @@ export function UploadDropzone({ publications }: UploadDropzoneProps) {
       '_payload',
       JSON.stringify({
         alt,
+        photoCredit: item.photoCredit,
         publications: publicationIDs,
       }),
     )
     formData.append('alt', alt)
-/*    publicationIDs.forEach((publicationID) => {
+    formData.append('photoCredit', item.photoCredit)
+    publicationIDs.forEach((publicationID) => {
       formData.append('publications', publicationID)
-    })*/
-
-    formData.append('publications', publicationIDs.join(','))
+    })
 
     try {
       const response = await fetch(endpoint, {
@@ -106,8 +172,19 @@ export function UploadDropzone({ publications }: UploadDropzoneProps) {
         progress: 'complete',
         uploadedUrl: result?.url,
       })
+      setUploadedItems((current) => [
+        {
+          fileName: item.file.name,
+          id: `${item.id}-uploaded`,
+          photoCredit: item.photoCredit,
+          previewUrl: URL.createObjectURL(item.file),
+        },
+        ...current,
+      ])
+      scheduleItemRemoval(item.id)
     } catch (error) {
       updateItem(item.id, {
+        isRemoving: false,
         error: error instanceof Error ? error.message : 'Upload failed.',
         progress: 'error',
       })
@@ -122,11 +199,26 @@ export function UploadDropzone({ publications }: UploadDropzoneProps) {
       return
     }
 
+    itemsRef.current
+      .filter((item) => item.progress === 'complete')
+      .forEach((item) => scheduleItemRemoval(item.id, 0))
+
     setItems((current) => [...nextItems, ...current])
+  }
+
+  const submitUploads = async () => {
+    setIsSubmitting(true)
     const publicationIDs = selectedPublicationIDs
-    nextItems.forEach((item) => {
-      void uploadFile(item, publicationIDs)
-    })
+
+    try {
+      for (const item of itemsRef.current) {
+        if (item.progress === 'ready' || item.progress === 'error') {
+          await uploadFile(item, publicationIDs)
+        }
+      }
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -135,39 +227,49 @@ export function UploadDropzone({ publications }: UploadDropzoneProps) {
         <div className="uploadHeader">
           <p className="eyebrow">Public uploads</p>
           <h1 id="upload-title">Image dropbox</h1>
-          <p className="lede">Choose publications to tag images, or upload without any.</p>
+          <p className="lede">
+            {fixedPublication
+              ? 'Upload images for this publication.'
+              : 'Choose publications to tag images, or upload without any.'}
+          </p>
         </div>
 
-        <fieldset className="publicationChooser" aria-label="Publications">
-          {publications.length > 0 ? (
-            <>
-              <label className="publicationOption">
-                <input
-                  checked={selectedPublicationIDs.length === 0}
-                  name="no-publications"
-                  onChange={() => setSelectedPublicationIDs([])}
-                  type="checkbox"
-                  value=""
-                />
-                <span>No publications</span>
-              </label>
-              {publications.map((publication) => (
-                <label className="publicationOption" key={publication.id}>
+        {fixedPublication ? (
+          <div className="fixedPublication">
+            <span>{fixedPublication.title}</span>
+          </div>
+        ) : (
+          <fieldset className="publicationChooser" aria-label="Publications">
+            {publications.length > 0 ? (
+              <>
+                <label className="publicationOption">
                   <input
-                    checked={selectedPublicationIDs.includes(publication.id)}
-                    name="publications"
-                    onChange={() => togglePublication(publication.id)}
+                    checked={selectedPublicationIDs.length === 0}
+                    name="no-publications"
+                    onChange={() => setSelectedPublicationIDs([])}
                     type="checkbox"
-                    value={publication.id}
+                    value=""
                   />
-                  <span>{publication.title}</span>
+                  <span>No publications</span>
                 </label>
-              ))}
-            </>
-          ) : (
-            <p>No publications are available. Images will upload without a publication.</p>
-          )}
-        </fieldset>
+                {publications.map((publication) => (
+                  <label className="publicationOption" key={publication.id}>
+                    <input
+                      checked={selectedPublicationIDs.includes(publication.id)}
+                      name="publications"
+                      onChange={() => togglePublication(publication.id)}
+                      type="checkbox"
+                      value={publication.id}
+                    />
+                    <span>{publication.title}</span>
+                  </label>
+                ))}
+              </>
+            ) : (
+              <p>No publications are available. Images will upload without a publication.</p>
+            )}
+          </fieldset>
+        )}
 
         <button
           className={`dropzone${isDragging ? ' isDragging' : ''}`}
@@ -214,7 +316,7 @@ export function UploadDropzone({ publications }: UploadDropzoneProps) {
         {items.length > 0 && (
           <div className="uploadList" aria-live="polite">
             {items.map((item) => (
-              <article className="uploadItem" key={item.id}>
+              <article className={`uploadItem${item.isRemoving ? ' isRemoving' : ''}`} key={item.id}>
                 <img alt="" className="uploadPreview" src={item.previewUrl} />
                 <div className="uploadDetails">
                   <div>
@@ -225,15 +327,51 @@ export function UploadDropzone({ publications }: UploadDropzoneProps) {
                     <span className="uploadStatus error">{item.error}</span>
                   ) : (
                     <span className={`uploadStatus ${item.progress}`}>
-                      {item.progress === 'queued' && 'Queued'}
+                      {item.progress === 'ready' && 'Ready'}
                       {item.progress === 'uploading' && 'Uploading'}
                       {item.progress === 'complete' && 'Uploaded'}
                     </span>
                   )}
                 </div>
+                <label className="creditField">
+                  <span>Photo credit</span>
+                  <input
+                    name={`photoCredit-${item.id}`}
+                    onChange={(event) => updateItem(item.id, { photoCredit: event.target.value })}
+                    type="text"
+                    value={item.photoCredit}
+                  />
+                </label>
               </article>
             ))}
+            <button
+              className="submitUploads"
+              disabled={isSubmitting || !hasPendingItems}
+              onClick={() => {
+                void submitUploads()
+              }}
+              type="button"
+            >
+              {isSubmitting ? 'Submitting' : 'Submit'}
+            </button>
           </div>
+        )}
+
+        {uploadedItems.length > 0 && (
+          <section className="successfulUploads" aria-labelledby="successful-uploads-title">
+            <h2 id="successful-uploads-title">Successfully uploaded files</h2>
+            <div className="successfulUploadList">
+              {uploadedItems.map((item) => (
+                <article className="successfulUploadItem" key={item.id}>
+                  <img alt="" src={item.previewUrl} />
+                  <div>
+                    <h3>{item.fileName}</h3>
+                    {item.photoCredit && <p>Photo Credit: {item.photoCredit}</p>}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
         )}
       </section>
     </div>

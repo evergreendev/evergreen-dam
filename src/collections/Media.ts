@@ -19,7 +19,14 @@ const getStringValues = (...values: unknown[]) => {
     return []
   })
 
-  return [...new Set(strings.map((value) => value.trim()).filter(Boolean))]
+  return [
+    ...new Set(
+      strings
+        .flatMap((value) => value.split(','))
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  ]
 }
 
 const getPublicationIDs = (values: string[]) => {
@@ -75,7 +82,7 @@ export const Media: CollectionConfig = {
     update: ({ req }) => Boolean(req.user),
   },
   admin: {
-    defaultColumns: ['filename', 'alt', 'publications', 'createdAt'],
+    defaultColumns: ['filename', 'alt', 'photoCredit', 'publications', 'createdAt'],
   },
   endpoints: [
     {
@@ -148,6 +155,7 @@ export const Media: CollectionConfig = {
                 ? req.data.alt
                 : req.file.name,
             ...(folderID ? { folder: folderID } : {}),
+            photoCredit: typeof req.data?.photoCredit === 'string' ? req.data.photoCredit.trim() : '',
             publications: publicationIDs,
           },
           file: req.file,
@@ -158,6 +166,7 @@ export const Media: CollectionConfig = {
           id: result.id,
           alt: result.alt,
           filename: result.filename,
+          photoCredit: result.photoCredit,
           publications: result.publications,
           url: result.url,
         })
@@ -175,6 +184,11 @@ export const Media: CollectionConfig = {
       name: 'alt',
       type: 'text',
       required: true,
+    },
+    {
+      name: 'photoCredit',
+      type: 'text',
+      label: 'Photo credit',
     },
   ],
   folders: true,

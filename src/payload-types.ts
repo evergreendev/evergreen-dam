@@ -77,6 +77,9 @@ export interface Config {
     'payload-migrations': PayloadMigration;
   };
   collectionsJoins: {
+    publications: {
+      media: 'media';
+    };
     'payload-folders': {
       documentsAndFolders: 'payload-folders' | 'media';
     };
@@ -163,6 +166,11 @@ export interface Publication {
   generateSlug?: boolean | null;
   slug: string;
   showOnFrontend?: boolean | null;
+  media?: {
+    docs?: (number | Media)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
   updatedAt: string;
   createdAt: string;
 }
@@ -174,6 +182,7 @@ export interface Media {
   id: number;
   publications?: (number | Publication)[] | null;
   alt: string;
+  photoCredit?: string | null;
   folder?: (number | null) | FolderInterface;
   updatedAt: string;
   createdAt: string;
@@ -326,6 +335,7 @@ export interface PublicationsSelect<T extends boolean = true> {
   generateSlug?: T;
   slug?: T;
   showOnFrontend?: T;
+  media?: T;
   updatedAt?: T;
   createdAt?: T;
 }
@@ -336,6 +346,7 @@ export interface PublicationsSelect<T extends boolean = true> {
 export interface MediaSelect<T extends boolean = true> {
   publications?: T;
   alt?: T;
+  photoCredit?: T;
   folder?: T;
   updatedAt?: T;
   createdAt?: T;
