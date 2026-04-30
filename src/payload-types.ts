@@ -172,7 +172,7 @@ export interface Publication {
  */
 export interface Media {
   id: number;
-  publication?: (number | null) | Publication;
+  publications?: (number | Publication)[] | null;
   alt: string;
   folder?: (number | null) | FolderInterface;
   updatedAt: string;
@@ -334,7 +334,7 @@ export interface PublicationsSelect<T extends boolean = true> {
  * via the `definition` "media_select".
  */
 export interface MediaSelect<T extends boolean = true> {
-  publication?: T;
+  publications?: T;
   alt?: T;
   folder?: T;
   updatedAt?: T;

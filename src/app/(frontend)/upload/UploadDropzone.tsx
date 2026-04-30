@@ -42,7 +42,7 @@ export function UploadDropzone({ publications }: UploadDropzoneProps) {
   const itemsRef = useRef<UploadItem[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [items, setItems] = useState<UploadItem[]>([])
-  const [selectedPublication, setSelectedPublication] = useState('')
+  const [selectedPublicationIDs, setSelectedPublicationIDs] = useState<string[]>([])
 
   useEffect(() => {
     itemsRef.current = items
@@ -58,15 +58,34 @@ export function UploadDropzone({ publications }: UploadDropzoneProps) {
     setItems((current) => current.map((item) => (item.id === id ? { ...item, ...updates } : item)))
   }
 
-  const uploadFile = async (item: UploadItem) => {
+  const togglePublication = (publicationID: string) => {
+    setSelectedPublicationIDs((current) =>
+      current.includes(publicationID)
+        ? current.filter((selectedID) => selectedID !== publicationID)
+        : [...current, publicationID],
+    )
+  }
+
+  const uploadFile = async (item: UploadItem, publicationIDs: string[]) => {
     updateItem(item.id, { progress: 'uploading' })
 
     const formData = new FormData()
+    const alt = item.file.name.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ')
+
     formData.append('file', item.file)
-    formData.append('alt', item.file.name.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' '))
-    if (selectedPublication) {
-      formData.append('publication', selectedPublication)
-    }
+    formData.append(
+      '_payload',
+      JSON.stringify({
+        alt,
+        publications: publicationIDs,
+      }),
+    )
+    formData.append('alt', alt)
+/*    publicationIDs.forEach((publicationID) => {
+      formData.append('publications', publicationID)
+    })*/
+
+    formData.append('publications', publicationIDs.join(','))
 
     try {
       const response = await fetch(endpoint, {
@@ -104,8 +123,9 @@ export function UploadDropzone({ publications }: UploadDropzoneProps) {
     }
 
     setItems((current) => [...nextItems, ...current])
+    const publicationIDs = selectedPublicationIDs
     nextItems.forEach((item) => {
-      void uploadFile(item)
+      void uploadFile(item, publicationIDs)
     })
   }
 
@@ -115,28 +135,28 @@ export function UploadDropzone({ publications }: UploadDropzoneProps) {
         <div className="uploadHeader">
           <p className="eyebrow">Public uploads</p>
           <h1 id="upload-title">Image dropbox</h1>
-          <p className="lede">Choose a publication to tag images, or upload without one.</p>
+          <p className="lede">Choose publications to tag images, or upload without any.</p>
         </div>
 
-        <fieldset className="publicationChooser" aria-label="Publication">
+        <fieldset className="publicationChooser" aria-label="Publications">
           {publications.length > 0 ? (
             <>
               <label className="publicationOption">
                 <input
-                  checked={!selectedPublication}
-                  name="publication"
-                  onChange={() => setSelectedPublication('')}
+                  checked={selectedPublicationIDs.length === 0}
+                  name="no-publications"
+                  onChange={() => setSelectedPublicationIDs([])}
                   type="checkbox"
                   value=""
                 />
-                <span>No publication</span>
+                <span>No publications</span>
               </label>
               {publications.map((publication) => (
                 <label className="publicationOption" key={publication.id}>
                   <input
-                    checked={selectedPublication === publication.id}
-                    name="publication"
-                    onChange={() => setSelectedPublication(publication.id)}
+                    checked={selectedPublicationIDs.includes(publication.id)}
+                    name="publications"
+                    onChange={() => togglePublication(publication.id)}
                     type="checkbox"
                     value={publication.id}
                   />
