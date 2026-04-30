@@ -1,4 +1,5 @@
 import type { CollectionConfig } from 'payload'
+import { revalidatePath } from 'next/cache'
 import { slugField } from 'payload'
 
 const formatSlug = (value: string) =>
@@ -7,6 +8,14 @@ const formatSlug = (value: string) =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
+
+const revalidateUploadRoutes = (...slugs: (null | string | undefined)[]) => {
+  revalidatePath('/upload')
+
+  slugs.filter(Boolean).forEach((slug) => {
+    revalidatePath(`/upload/${slug}`)
+  })
+}
 
 export const Publications: CollectionConfig = {
   slug: 'publications',
@@ -19,6 +28,18 @@ export const Publications: CollectionConfig = {
   admin: {
     defaultColumns: ['title', 'slug', 'showOnFrontend', 'media'],
     useAsTitle: 'title',
+  },
+  hooks: {
+    afterChange: [
+      ({ doc, previousDoc }) => {
+        revalidateUploadRoutes(doc.slug, previousDoc?.slug)
+      },
+    ],
+    afterDelete: [
+      ({ doc }) => {
+        revalidateUploadRoutes(doc.slug)
+      },
+    ],
   },
   fields: [
     {
