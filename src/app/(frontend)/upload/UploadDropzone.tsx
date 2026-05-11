@@ -102,6 +102,22 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
     setItems((current) => current.map((item) => (item.id === id ? { ...item, ...updates } : item)))
   }
 
+  const fillEmptyPhotoCredits = (sourceID: string) => {
+    setItems((current) => {
+      const sourceCredit = current.find((item) => item.id === sourceID)?.photoCredit
+
+      if (!sourceCredit?.trim()) {
+        return current
+      }
+
+      return current.map((item) =>
+        item.id !== sourceID && item.photoCredit.trim() === ''
+          ? { ...item, photoCredit: sourceCredit }
+          : item,
+      )
+    })
+  }
+
   const updateContact = (updates: Partial<ContactInfo>) => {
     setContact((current) => ({ ...current, ...updates }))
   }
@@ -435,15 +451,33 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
                       </div>
                     )}
                   </div>
-                  <label className="creditField">
-                    <span>Photo credit</span>
-                    <input
-                      name={`photoCredit-${item.id}`}
-                      onChange={(event) => updateItem(item.id, { photoCredit: event.target.value })}
-                      type="text"
-                      value={item.photoCredit}
-                    />
-                  </label>
+                  <div className="creditField">
+                    <label>
+                      <span>Photo credit</span>
+                      <input
+                        name={`photoCredit-${item.id}`}
+                        onChange={(event) =>
+                          updateItem(item.id, { photoCredit: event.target.value })
+                        }
+                        type="text"
+                        value={item.photoCredit}
+                      />
+                    </label>
+                    {item.photoCredit.trim() !== '' &&
+                      items.some(
+                        (otherItem) =>
+                          otherItem.id !== item.id && otherItem.photoCredit.trim() === '',
+                      ) && (
+                        <button
+                          className="fillEmptyCredits"
+                          disabled={isSubmitting}
+                          onClick={() => fillEmptyPhotoCredits(item.id)}
+                          type="button"
+                        >
+                          Copy value to all empty Photo Credit fields
+                        </button>
+                      )}
+                  </div>
                 </article>
               ))}
               <button
