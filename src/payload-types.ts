@@ -183,6 +183,12 @@ export interface Media {
   publications?: (number | Publication)[] | null;
   alt: string;
   photoCredit?: string | null;
+  contact?: {
+    firstName?: string | null;
+    lastName?: string | null;
+    businessName?: string | null;
+    email?: string | null;
+  };
   folder?: (number | null) | FolderInterface;
   updatedAt: string;
   createdAt: string;
@@ -347,6 +353,14 @@ export interface MediaSelect<T extends boolean = true> {
   publications?: T;
   alt?: T;
   photoCredit?: T;
+  contact?:
+    | T
+    | {
+        firstName?: T;
+        lastName?: T;
+        businessName?: T;
+        email?: T;
+      };
   folder?: T;
   updatedAt?: T;
   createdAt?: T;

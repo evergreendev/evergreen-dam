@@ -46,6 +46,24 @@ const getPublicationIDs = (values: string[]) => {
   return ids
 }
 
+const getTrimmedString = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
+
+const getContactData = (data: PayloadRequest['data']) => {
+  const contact =
+    data?.contact && typeof data.contact === 'object'
+      ? (data.contact as Record<string, unknown>)
+      : {}
+
+  return {
+    businessName: getTrimmedString(
+      contact.businessName ?? data?.['contact.businessName'],
+    ),
+    email: getTrimmedString(contact.email ?? data?.['contact.email']),
+    firstName: getTrimmedString(contact.firstName ?? data?.['contact.firstName']),
+    lastName: getTrimmedString(contact.lastName ?? data?.['contact.lastName']),
+  }
+}
+
 const getMediaFolderID = async (req: PayloadRequest, folderName: string) => {
   const existingFolders = await req.payload.find({
     collection: 'payload-folders',
@@ -178,9 +196,9 @@ export const Media: CollectionConfig = {
         }
 
         const baseData = {
-          alt:
-            typeof req.data?.alt === 'string' && req.data.alt.trim() ? req.data.alt : req.file.name,
-          photoCredit: typeof req.data?.photoCredit === 'string' ? req.data.photoCredit.trim() : '',
+          alt: getTrimmedString(req.data?.alt) || req.file.name,
+          contact: getContactData(req.data),
+          photoCredit: getTrimmedString(req.data?.photoCredit),
         }
         const mediaToCreate =
           publicationIDs.length > 1
@@ -217,6 +235,7 @@ export const Media: CollectionConfig = {
           id: result.id,
           alt: result.alt,
           filename: result.filename,
+          contact: result.contact,
           photoCredit: result.photoCredit,
           publications: result.publications,
           files: results.map((createdMedia) => ({
@@ -327,6 +346,32 @@ export const Media: CollectionConfig = {
       name: 'photoCredit',
       type: 'text',
       label: 'Photo credit',
+    },
+    {
+      name: 'contact',
+      type: 'group',
+      fields: [
+        {
+          name: 'firstName',
+          type: 'text',
+          label: 'First name',
+        },
+        {
+          name: 'lastName',
+          type: 'text',
+          label: 'Last name',
+        },
+        {
+          name: 'businessName',
+          type: 'text',
+          label: 'Business name',
+        },
+        {
+          name: 'email',
+          type: 'email',
+          label: 'Email address',
+        },
+      ],
     },
   ],
   folders: true,

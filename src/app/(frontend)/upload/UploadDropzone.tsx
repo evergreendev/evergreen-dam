@@ -2,6 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react'
 
+type ContactInfo = {
+  businessName: string
+  email: string
+  firstName: string
+  lastName: string
+}
+
 type UploadItem = {
   error?: string
   file: File
@@ -33,6 +40,12 @@ type UploadDropzoneProps = {
 const endpoint = '/api/media/public-upload'
 const removalFadeMS = 450
 const uploadedItemVisibleMS = 2500
+const emptyContact: ContactInfo = {
+  businessName: '',
+  email: '',
+  firstName: '',
+  lastName: '',
+}
 
 const formatBytes = (bytes: number) => {
   if (bytes < 1024 * 1024) {
@@ -57,12 +70,15 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
   const uploadedItemsRef = useRef<UploadedItem[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [contact, setContact] = useState<ContactInfo>(emptyContact)
   const [items, setItems] = useState<UploadItem[]>([])
   const [uploadedItems, setUploadedItems] = useState<UploadedItem[]>([])
   const [selectedPublicationIDs, setSelectedPublicationIDs] = useState<string[]>(
     fixedPublication ? [fixedPublication.id] : [],
   )
-  const hasPendingItems = items.some((item) => item.progress === 'ready' || item.progress === 'error')
+  const hasPendingItems = items.some(
+    (item) => item.progress === 'ready' || item.progress === 'error',
+  )
 
   useEffect(() => {
     itemsRef.current = items
@@ -84,6 +100,10 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
 
   const updateItem = (id: string, updates: Partial<UploadItem>) => {
     setItems((current) => current.map((item) => (item.id === id ? { ...item, ...updates } : item)))
+  }
+
+  const updateContact = (updates: Partial<ContactInfo>) => {
+    setContact((current) => ({ ...current, ...updates }))
   }
 
   const clearRemovalTimers = (id: string) => {
@@ -132,7 +152,11 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
     )
   }
 
-  const uploadFile = async (item: UploadItem, publicationIDs: string[]) => {
+  const uploadFile = async (
+    item: UploadItem,
+    publicationIDs: string[],
+    contactInfo: ContactInfo,
+  ) => {
     updateItem(item.id, { progress: 'uploading' })
 
     const formData = new FormData()
@@ -144,11 +168,16 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
       JSON.stringify({
         alt,
         photoCredit: item.photoCredit,
+        contact: contactInfo,
         publications: publicationIDs,
       }),
     )
     formData.append('alt', alt)
     formData.append('photoCredit', item.photoCredit)
+    formData.append('contact.firstName', contactInfo.firstName)
+    formData.append('contact.lastName', contactInfo.lastName)
+    formData.append('contact.businessName', contactInfo.businessName)
+    formData.append('contact.email', contactInfo.email)
     publicationIDs.forEach((publicationID) => {
       formData.append('publications', publicationID)
     })
@@ -209,11 +238,14 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
   const submitUploads = async () => {
     setIsSubmitting(true)
     const publicationIDs = selectedPublicationIDs
+    const contactForUploads = contact
 
     try {
       for (const item of itemsRef.current) {
-        if (item.progress === 'ready' || item.progress === 'error') {
-          await uploadFile(item, publicationIDs)
+        const currentItem = itemsRef.current.find((current) => current.id === item.id)
+
+        if (currentItem && (currentItem.progress === 'ready' || currentItem.progress === 'error')) {
+          await uploadFile(currentItem, publicationIDs, contactForUploads)
         }
       }
     } finally {
@@ -314,47 +346,118 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
         />
 
         {items.length > 0 && (
-          <div className="uploadList" aria-live="polite">
-            {items.map((item) => (
-              <article className={`uploadItem${item.isRemoving ? ' isRemoving' : ''}`} key={item.id}>
-                <img alt="" className="uploadPreview" src={item.previewUrl} />
-                <div className="uploadDetails">
-                  <div>
-                    <h2>{item.file.name}</h2>
-                    <p>{formatBytes(item.file.size)}</p>
+          <>
+            <fieldset className="contactField uploadContactField">
+              <legend>Contact</legend>
+              <label>
+                <span>First name</span>
+                <input
+                  autoComplete="given-name"
+                  name="contactFirstName"
+                  onChange={(event) => updateContact({ firstName: event.target.value })}
+                  type="text"
+                  value={contact.firstName}
+                />
+              </label>
+              <label>
+                <span>Last name</span>
+                <input
+                  autoComplete="family-name"
+                  name="contactLastName"
+                  onChange={(event) => updateContact({ lastName: event.target.value })}
+                  type="text"
+                  value={contact.lastName}
+                />
+              </label>
+              <label>
+                <span>Business name</span>
+                <input
+                  autoComplete="organization"
+                  name="contactBusinessName"
+                  onChange={(event) => updateContact({ businessName: event.target.value })}
+                  type="text"
+                  value={contact.businessName}
+                />
+              </label>
+              <label>
+                <span>Email address</span>
+                <input
+                  autoComplete="email"
+                  name="contactEmail"
+                  onChange={(event) => updateContact({ email: event.target.value })}
+                  type="email"
+                  value={contact.email}
+                />
+              </label>
+            </fieldset>
+
+            <div className="uploadList" aria-live="polite">
+              {items.map((item) => (
+                <article
+                  className={`uploadItem${item.isRemoving ? ' isRemoving' : ''}`}
+                  key={item.id}
+                >
+                  <img alt="" className="uploadPreview" src={item.previewUrl} />
+                  <div className="uploadDetails">
+                    <div>
+                      <h2>{item.file.name}</h2>
+                      <p>{formatBytes(item.file.size)}</p>
+                    </div>
+                    {item.progress === 'error' ? (
+                      <div className="uploadActions">
+                        <span className="uploadStatus error">{item.error}</span>
+                        <button
+                          className="removeUpload"
+                          disabled={isSubmitting}
+                          onClick={() => removeItem(item.id)}
+                          type="button"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="uploadActions">
+                        <span className={`uploadStatus ${item.progress}`}>
+                          {item.progress === 'ready' && 'Ready'}
+                          {item.progress === 'uploading' && 'Uploading'}
+                          {item.progress === 'complete' && 'Uploaded'}
+                        </span>
+                        {item.progress === 'ready' && (
+                          <button
+                            className="removeUpload"
+                            disabled={isSubmitting}
+                            onClick={() => removeItem(item.id)}
+                            type="button"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  {item.progress === 'error' ? (
-                    <span className="uploadStatus error">{item.error}</span>
-                  ) : (
-                    <span className={`uploadStatus ${item.progress}`}>
-                      {item.progress === 'ready' && 'Ready'}
-                      {item.progress === 'uploading' && 'Uploading'}
-                      {item.progress === 'complete' && 'Uploaded'}
-                    </span>
-                  )}
-                </div>
-                <label className="creditField">
-                  <span>Photo credit</span>
-                  <input
-                    name={`photoCredit-${item.id}`}
-                    onChange={(event) => updateItem(item.id, { photoCredit: event.target.value })}
-                    type="text"
-                    value={item.photoCredit}
-                  />
-                </label>
-              </article>
-            ))}
-            <button
-              className="submitUploads"
-              disabled={isSubmitting || !hasPendingItems}
-              onClick={() => {
-                void submitUploads()
-              }}
-              type="button"
-            >
-              {isSubmitting ? 'Submitting' : 'Submit'}
-            </button>
-          </div>
+                  <label className="creditField">
+                    <span>Photo credit</span>
+                    <input
+                      name={`photoCredit-${item.id}`}
+                      onChange={(event) => updateItem(item.id, { photoCredit: event.target.value })}
+                      type="text"
+                      value={item.photoCredit}
+                    />
+                  </label>
+                </article>
+              ))}
+              <button
+                className="submitUploads"
+                disabled={isSubmitting || !hasPendingItems}
+                onClick={() => {
+                  void submitUploads()
+                }}
+                type="button"
+              >
+                {isSubmitting ? 'Submitting' : 'Submit'}
+              </button>
+            </div>
+          </>
         )}
 
         {uploadedItems.length > 0 && (

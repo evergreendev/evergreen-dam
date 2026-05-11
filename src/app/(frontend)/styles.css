@@ -48,6 +48,10 @@ input {
   font: inherit;
 }
 
+fieldset {
+  min-width: 0;
+}
+
 button {
   color: inherit;
 }
@@ -329,20 +333,84 @@ h1 {
   white-space: normal;
 }
 
+.uploadActions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.removeUpload {
+  min-height: 31px;
+  padding: 4px 10px;
+  cursor: pointer;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.removeUpload:hover,
+.removeUpload:focus-visible {
+  border-color: var(--color-error);
+  color: var(--color-error);
+  outline: none;
+}
+
+.removeUpload:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .creditField {
   display: grid;
   grid-column: 2;
   gap: 6px;
 }
 
-.creditField span {
+.contactField {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.contactField legend {
+  grid-column: 1 / -1;
+  margin: 0 0 6px;
+  padding: 0;
   color: var(--color-muted);
   font-size: 0.82rem;
   font-weight: 700;
   line-height: 1.3;
 }
 
-.creditField input {
+.contactField label {
+  display: grid;
+  gap: 6px;
+}
+
+.uploadContactField {
+  margin-top: 22px;
+}
+
+.creditField span,
+.contactField span {
+  color: var(--color-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.creditField input,
+.contactField input {
   width: 100%;
   min-height: 44px;
   padding: 8px 10px;
@@ -352,7 +420,8 @@ h1 {
   color: var(--color-text);
 }
 
-.creditField input:focus {
+.creditField input:focus,
+.contactField input:focus {
   border-color: var(--color-accent);
   outline: none;
 }
@@ -458,6 +527,10 @@ h1 {
 
   .creditField {
     grid-column: 1 / -1;
+  }
+
+  .uploadContactField {
+    grid-template-columns: 1fr;
   }
 
   .submitUploads {
