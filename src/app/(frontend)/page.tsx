@@ -1,59 +1,77 @@
-import { headers as getHeaders } from 'next/headers.js'
-import Image from 'next/image'
-import { getPayload } from 'payload'
 import React from 'react'
-import { fileURLToPath } from 'url'
 
 import config from '@/payload.config'
 import './styles.css'
 
 export default async function HomePage() {
-  const headers = await getHeaders()
   const payloadConfig = await config
-  const payload = await getPayload({ config: payloadConfig })
-  const { user } = await payload.auth({ headers })
-
-  const fileURL = `vscode://file/${fileURLToPath(import.meta.url)}`
 
   return (
     <div className="home">
-      <div className="content">
-        <picture>
-          <source srcSet="https://raw.githubusercontent.com/payloadcms/payload/3.x/packages/ui/src/assets/payload-favicon.svg" />
-          <Image
-            alt="Payload Logo"
-            height={65}
-            src="https://raw.githubusercontent.com/payloadcms/payload/3.x/packages/ui/src/assets/payload-favicon.svg"
-            width={65}
+      <header className="siteHeader">
+        <a className="brandMark" href="/" aria-label="Evergreen Media home">
+          <img
+            alt="Evergreen Media"
+            src="/evergreen-logo.png"
           />
-        </picture>
-        {!user && <h1>Welcome to your new project.</h1>}
-        {user && <h1>Welcome back, {user.email}</h1>}
-        <div className="links">
+        </a>
+        <nav className="siteNav" aria-label="Primary">
+          <a href="/upload">Upload</a>
           <a
-            className="admin"
             href={payloadConfig.routes.admin}
             rel="noopener noreferrer"
             target="_blank"
           >
-            Go to admin panel
+            Admin
           </a>
-          <a
-            className="docs"
-            href="https://payloadcms.com/docs"
-            rel="noopener noreferrer"
-            target="_blank"
-          >
-            Documentation
-          </a>
+        </nav>
+      </header>
+
+      <section className="hero" aria-labelledby="home-title">
+        <div className="heroCopy">
+          <p className="eyebrow">Fresh. Enduring. Relevant.</p>
+          <h1 id="home-title">
+            Digital asset management for Evergreen Media.
+          </h1>
+          <p className="lede">
+            A branded home for collecting image submissions, organizing publication assets, and
+            keeping creative work moving for Rapid City and the Black Hills.
+          </p>
+          <div className="homeActions">
+            <a className="primaryAction" href="/upload">
+              Start an upload
+            </a>
+            <a
+              className="secondaryAction"
+              href={payloadConfig.routes.admin}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              Open admin
+            </a>
+          </div>
         </div>
-      </div>
-      <div className="footer">
-        <p>Update this page by editing</p>
-        <a className="codeLink" href={fileURL}>
-          <code>app/(frontend)/page.tsx</code>
+        <div className="heroPanel" aria-label="Evergreen Media production highlights">
+          <div>
+            <span>869k</span>
+            <p>Printed magazines produced each year</p>
+          </div>
+          <div>
+            <span>Print + Digital</span>
+            <p>Publication assets, web content, and customer submissions in one workflow</p>
+          </div>
+          <div>
+            <span>Public uploads</span>
+            <p>Contributors can send images without Payload admin access</p>
+          </div>
+        </div>
+      </section>
+
+      <footer className="siteFooter">
+        <a href="https://evergreenmediarc.com/" rel="noopener noreferrer" target="_blank">
+          evergreenmediarc.com
         </a>
-      </div>
+      </footer>
     </div>
   )
 }

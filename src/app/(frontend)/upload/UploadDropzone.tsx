@@ -40,6 +40,8 @@ type UploadDropzoneProps = {
 const endpoint = '/api/media/public-upload'
 const removalFadeMS = 450
 const uploadedItemVisibleMS = 2500
+const licenseAgreementText =
+  'By submitting photos to this FTP site, you grant Evergreen Media and its affiliated publications a non-exclusive, royalty-free, perpetual, worldwide license to edit, reproduce, publish, distribute and otherwise use the submitted images in print, digital and promotional formats. You confirm that you own the rights to the images or have permission from the rightsholder to grant this license, and that any identifiable individuals depicted have given appropriate consent for their likeness to be used. Submissions may be cropped or otherwise adjusted for editorial and production purposes without additional approval. If used, we will provide appropriate photo credit. Submission does not guarantee publication.'
 const emptyContact: ContactInfo = {
   businessName: '',
   email: '',
@@ -72,6 +74,7 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [contact, setContact] = useState<ContactInfo>(emptyContact)
   const [items, setItems] = useState<UploadItem[]>([])
+  const [licenseAgreementAccepted, setLicenseAgreementAccepted] = useState(false)
   const [uploadedItems, setUploadedItems] = useState<UploadedItem[]>([])
   const [selectedPublicationIDs, setSelectedPublicationIDs] = useState<string[]>(
     fixedPublication ? [fixedPublication.id] : [],
@@ -172,6 +175,7 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
     item: UploadItem,
     publicationIDs: string[],
     contactInfo: ContactInfo,
+    agreementAccepted: boolean,
   ) => {
     updateItem(item.id, { progress: 'uploading' })
 
@@ -185,6 +189,7 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
         alt,
         photoCredit: item.photoCredit,
         contact: contactInfo,
+        licenseAgreement: agreementAccepted,
         publications: publicationIDs,
       }),
     )
@@ -194,6 +199,7 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
     formData.append('contact.lastName', contactInfo.lastName)
     formData.append('contact.businessName', contactInfo.businessName)
     formData.append('contact.email', contactInfo.email)
+    formData.append('licenseAgreement', agreementAccepted ? 'true' : 'false')
     publicationIDs.forEach((publicationID) => {
       formData.append('publications', publicationID)
     })
@@ -252,16 +258,26 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
   }
 
   const submitUploads = async () => {
+    if (!licenseAgreementAccepted) {
+      return
+    }
+
     setIsSubmitting(true)
     const publicationIDs = selectedPublicationIDs
     const contactForUploads = contact
+    const agreementAcceptedForUploads = licenseAgreementAccepted
 
     try {
       for (const item of itemsRef.current) {
         const currentItem = itemsRef.current.find((current) => current.id === item.id)
 
         if (currentItem && (currentItem.progress === 'ready' || currentItem.progress === 'error')) {
-          await uploadFile(currentItem, publicationIDs, contactForUploads)
+          await uploadFile(
+            currentItem,
+            publicationIDs,
+            contactForUploads,
+            agreementAcceptedForUploads,
+          )
         }
       }
     } finally {
@@ -271,14 +287,20 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
 
   return (
     <div className="uploadPage">
+      <header className="uploadBrandBar">
+        <a href="/" aria-label="Evergreen Media home">
+          <img alt="Evergreen Media" src="/evergreen-logo.png" />
+        </a>
+        <span>Fresh. Enduring. Relevant.</span>
+      </header>
       <section className="uploadShell" aria-labelledby="upload-title">
         <div className="uploadHeader">
-          <p className="eyebrow">Public uploads</p>
-          <h1 id="upload-title">Image dropbox</h1>
+          <p className="eyebrow">Creating Connections</p>
+          <h1 id="upload-title">Evergreen image dropbox</h1>
           <p className="lede">
             {fixedPublication
-              ? 'Upload images for this publication.'
-              : 'Choose publications to tag images, or upload without any.'}
+              ? `Upload images for ${fixedPublication.title}.`
+              : 'Choose publications to tag images for print, digital, and promotional work.'}
           </p>
         </div>
 
@@ -295,6 +317,7 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
                     checked={selectedPublicationIDs.length === 0}
                     name="no-publications"
                     onChange={() => setSelectedPublicationIDs([])}
+                    suppressHydrationWarning
                     type="checkbox"
                     value=""
                   />
@@ -306,6 +329,7 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
                       checked={selectedPublicationIDs.includes(publication.id)}
                       name="publications"
                       onChange={() => togglePublication(publication.id)}
+                      suppressHydrationWarning
                       type="checkbox"
                       value={publication.id}
                     />
@@ -358,6 +382,7 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
               event.target.value = ''
             }
           }}
+          suppressHydrationWarning
           type="file"
         />
 
@@ -371,6 +396,7 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
                   autoComplete="given-name"
                   name="contactFirstName"
                   onChange={(event) => updateContact({ firstName: event.target.value })}
+                  suppressHydrationWarning
                   type="text"
                   value={contact.firstName}
                 />
@@ -381,6 +407,7 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
                   autoComplete="family-name"
                   name="contactLastName"
                   onChange={(event) => updateContact({ lastName: event.target.value })}
+                  suppressHydrationWarning
                   type="text"
                   value={contact.lastName}
                 />
@@ -391,6 +418,7 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
                   autoComplete="organization"
                   name="contactBusinessName"
                   onChange={(event) => updateContact({ businessName: event.target.value })}
+                  suppressHydrationWarning
                   type="text"
                   value={contact.businessName}
                 />
@@ -401,11 +429,29 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
                   autoComplete="email"
                   name="contactEmail"
                   onChange={(event) => updateContact({ email: event.target.value })}
+                  suppressHydrationWarning
                   type="email"
                   value={contact.email}
                 />
               </label>
             </fieldset>
+
+            <section className="licenseAgreement" aria-labelledby="license-agreement-title">
+              <h2 id="license-agreement-title">Submission agreement</h2>
+              <p>{licenseAgreementText}</p>
+              <label className="licenseAgreementCheck">
+                <input
+                  checked={licenseAgreementAccepted}
+                  disabled={isSubmitting}
+                  name="licenseAgreement"
+                  onChange={(event) => setLicenseAgreementAccepted(event.target.checked)}
+                  required
+                  suppressHydrationWarning
+                  type="checkbox"
+                />
+                <span>I have read and agree to these submission terms.</span>
+              </label>
+            </section>
 
             <div className="uploadList" aria-live="polite">
               {items.map((item) => (
@@ -459,6 +505,7 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
                         onChange={(event) =>
                           updateItem(item.id, { photoCredit: event.target.value })
                         }
+                        suppressHydrationWarning
                         type="text"
                         value={item.photoCredit}
                       />
@@ -482,7 +529,7 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
               ))}
               <button
                 className="submitUploads"
-                disabled={isSubmitting || !hasPendingItems}
+                disabled={isSubmitting || !hasPendingItems || !licenseAgreementAccepted}
                 onClick={() => {
                   void submitUploads()
                 }}

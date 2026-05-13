@@ -189,6 +189,10 @@ export interface Media {
     businessName?: string | null;
     email?: string | null;
   };
+  /**
+   * Checked when a public uploader accepted the submission terms.
+   */
+  licenseAgreement?: boolean | null;
   folder?: (number | null) | FolderInterface;
   updatedAt: string;
   createdAt: string;
@@ -361,6 +365,7 @@ export interface MediaSelect<T extends boolean = true> {
         businessName?: T;
         email?: T;
       };
+  licenseAgreement?: T;
   folder?: T;
   updatedAt?: T;
   createdAt?: T;

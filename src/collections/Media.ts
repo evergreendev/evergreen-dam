@@ -48,6 +48,8 @@ const getPublicationIDs = (values: string[]) => {
 
 const getTrimmedString = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
 
+const isAccepted = (value: unknown) => value === true || value === 'true' || value === 'on'
+
 const getContactData = (data: PayloadRequest['data']) => {
   const contact =
     data?.contact && typeof data.contact === 'object'
@@ -135,6 +137,13 @@ export const Media: CollectionConfig = {
           return Response.json({ message: 'Only image uploads are allowed.' }, { status: 415 })
         }
 
+        if (!isAccepted(req.data?.licenseAgreement)) {
+          return Response.json(
+            { message: 'You must agree to the submission terms before uploading.' },
+            { status: 400 },
+          )
+        }
+
         const publicationValues = getStringValues(req.data?.publications, req.data?.publication)
         const publicationIDs = getPublicationIDs(publicationValues)
         let folderID: number | undefined
@@ -198,6 +207,7 @@ export const Media: CollectionConfig = {
         const baseData = {
           alt: getTrimmedString(req.data?.alt) || req.file.name,
           contact: getContactData(req.data),
+          licenseAgreement: true,
           photoCredit: getTrimmedString(req.data?.photoCredit),
         }
         const mediaToCreate =
@@ -372,6 +382,15 @@ export const Media: CollectionConfig = {
           label: 'Email address',
         },
       ],
+    },
+    {
+      name: 'licenseAgreement',
+      type: 'checkbox',
+      label: 'Submission agreement accepted',
+      admin: {
+        description: 'Checked when a public uploader accepted the submission terms.',
+        readOnly: true,
+      },
     },
   ],
   folders: true,
