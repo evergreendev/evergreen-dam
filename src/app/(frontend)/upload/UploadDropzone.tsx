@@ -288,9 +288,9 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
   return (
     <div className="uploadPage">
       <header className="uploadBrandBar">
-        <a href="/" aria-label="Evergreen Media home">
+        <div>
           <img alt="Evergreen Media" src="/evergreen-logo.png" />
-        </a>
+        </div>
         <span>Fresh. Enduring. Relevant.</span>
       </header>
       <section className="uploadShell" aria-labelledby="upload-title">
