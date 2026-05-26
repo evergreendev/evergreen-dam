@@ -235,32 +235,32 @@ export function UploadDropzone({
     const formData = new FormData()
     const alt = item.file.name.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ')
 
-    formData.append('file', item.file)
-    formData.append(
-      '_payload',
-      JSON.stringify({
-        alt,
-        photoCredit: item.photoCredit,
-        contact: contactInfo,
-        licenseAgreement: agreementAccepted,
-        publications: publicationIDs,
-      }),
-    )
-    formData.append('alt', alt)
-    formData.append('photoCredit', item.photoCredit)
-    formData.append('contact.firstName', contactInfo.firstName)
-    formData.append('contact.lastName', contactInfo.lastName)
-    formData.append('contact.businessName', contactInfo.businessName)
-    formData.append('contact.email', contactInfo.email)
-    formData.append('licenseAgreement', agreementAccepted ? 'true' : 'false')
-    publicationIDs.forEach((publicationID) => {
-      formData.append('publications', publicationID)
-    })
-
     try {
       const recaptchaToken = await getRecaptchaToken()
 
+      formData.append('file', item.file)
+      formData.append(
+        '_payload',
+        JSON.stringify({
+          alt,
+          photoCredit: item.photoCredit,
+          contact: contactInfo,
+          licenseAgreement: agreementAccepted,
+          publications: publicationIDs,
+          recaptchaToken,
+        }),
+      )
+      formData.append('alt', alt)
+      formData.append('photoCredit', item.photoCredit)
+      formData.append('contact.firstName', contactInfo.firstName)
+      formData.append('contact.lastName', contactInfo.lastName)
+      formData.append('contact.businessName', contactInfo.businessName)
+      formData.append('contact.email', contactInfo.email)
+      formData.append('licenseAgreement', agreementAccepted ? 'true' : 'false')
       formData.append('recaptchaToken', recaptchaToken)
+      publicationIDs.forEach((publicationID) => {
+        formData.append('publications', publicationID)
+      })
 
       const response = await fetch(endpoint, {
         body: formData,
