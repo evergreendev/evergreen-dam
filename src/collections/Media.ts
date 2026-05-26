@@ -50,6 +50,92 @@ const getTrimmedString = (value: unknown) => (typeof value === 'string' ? value.
 
 const isAccepted = (value: unknown) => value === true || value === 'true' || value === 'on'
 
+const recaptchaAction = process.env.RECAPTCHA_ACTION || 'public_upload'
+const recaptchaMinimumScore = Number(process.env.RECAPTCHA_MIN_SCORE || 0.5)
+
+type RecaptchaSiteVerifyResponse = {
+  action?: string
+  'error-codes'?: string[]
+  score?: number
+  success: boolean
+}
+
+const getRecaptchaToken = (data: PayloadRequest['data']) =>
+  getTrimmedString(data?.recaptchaToken ?? data?.['g-recaptcha-response'])
+
+const verifyRecaptcha = async (req: PayloadRequest) => {
+  const secretKey = process.env.RECAPTCHA_SECRET_KEY
+
+  if (!secretKey) {
+    return {
+      message: 'Upload protection is not configured.',
+      status: 500,
+    }
+  }
+
+  const token = getRecaptchaToken(req.data)
+
+  if (!token) {
+    return {
+      message: 'Complete the reCAPTCHA check before uploading.',
+      status: 400,
+    }
+  }
+
+  const formData = new URLSearchParams({
+    response: token,
+    secret: secretKey,
+  })
+  const forwardedFor = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+
+  if (forwardedFor) {
+    formData.set('remoteip', forwardedFor)
+  }
+
+  let result: RecaptchaSiteVerifyResponse
+
+  try {
+    const response = await fetch('https://www.google.com/recaptcha/api/siteverify', {
+      body: formData,
+      method: 'POST',
+    })
+
+    result = (await response.json()) as RecaptchaSiteVerifyResponse
+  } catch {
+    return {
+      message: 'The reCAPTCHA check could not be verified.',
+      status: 502,
+    }
+  }
+
+  if (!result.success) {
+    return {
+      message: 'The reCAPTCHA check failed. Please try again.',
+      status: 400,
+    }
+  }
+
+  if (result.action && result.action !== recaptchaAction) {
+    return {
+      message: 'The reCAPTCHA check did not match this upload form.',
+      status: 400,
+    }
+  }
+
+  if (
+    Number.isFinite(recaptchaMinimumScore) &&
+    typeof result.score === 'number' &&
+    result.score < recaptchaMinimumScore
+  ) {
+    return {
+      message: 'The reCAPTCHA check failed. Please try again.',
+      status: 400,
+    }
+  }
+
+  return null
+}
+
 const getContactData = (data: PayloadRequest['data']) => {
   const contact =
     data?.contact && typeof data.contact === 'object'
@@ -141,6 +227,15 @@ export const Media: CollectionConfig = {
           return Response.json(
             { message: 'You must agree to the submission terms before uploading.' },
             { status: 400 },
+          )
+        }
+
+        const recaptchaError = await verifyRecaptcha(req)
+
+        if (recaptchaError) {
+          return Response.json(
+            { message: recaptchaError.message },
+            { status: recaptchaError.status },
           )
         }
 

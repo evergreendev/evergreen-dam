@@ -29,5 +29,10 @@ export default async function UploadPage() {
     title: publication.title,
   }))
 
-  return <UploadDropzone publications={publications} />
+  return (
+    <UploadDropzone
+      publications={publications}
+      recaptchaSiteKey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
+    />
+  )
 }

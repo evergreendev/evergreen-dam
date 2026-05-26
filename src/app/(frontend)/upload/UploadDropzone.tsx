@@ -2,6 +2,17 @@
 
 import { useEffect, useRef, useState } from 'react'
 
+type Grecaptcha = {
+  execute: (siteKey: string, options: { action: string }) => Promise<string>
+  ready: (callback: () => void) => void
+}
+
+declare global {
+  interface Window {
+    grecaptcha?: Grecaptcha
+  }
+}
+
 type ContactInfo = {
   businessName: string
   email: string
@@ -35,10 +46,12 @@ type PublicationOption = {
 type UploadDropzoneProps = {
   fixedPublication?: PublicationOption
   publications: PublicationOption[]
+  recaptchaSiteKey?: string
 }
 
 const endpoint = '/api/media/public-upload'
 const removalFadeMS = 450
+const recaptchaAction = process.env.NEXT_PUBLIC_RECAPTCHA_ACTION || 'public_upload'
 const uploadedItemVisibleMS = 2500
 const licenseAgreementText =
   'By submitting photos to this FTP site, you grant Evergreen Media and its affiliated publications a non-exclusive, royalty-free, perpetual, worldwide license to edit, reproduce, publish, distribute and otherwise use the submitted images in print, digital and promotional formats. You confirm that you own the rights to the images or have permission from the rightsholder to grant this license, and that any identifiable individuals depicted have given appropriate consent for their likeness to be used. Submissions may be cropped or otherwise adjusted for editorial and production purposes without additional approval. If used, we will provide appropriate photo credit. Submission does not guarantee publication.'
@@ -65,7 +78,11 @@ const createUploadItem = (file: File): UploadItem => ({
   progress: 'ready',
 })
 
-export function UploadDropzone({ fixedPublication, publications }: UploadDropzoneProps) {
+export function UploadDropzone({
+  fixedPublication,
+  publications,
+  recaptchaSiteKey,
+}: UploadDropzoneProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const itemsRef = useRef<UploadItem[]>([])
   const removalTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>[]>>(new Map())
@@ -75,6 +92,7 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
   const [contact, setContact] = useState<ContactInfo>(emptyContact)
   const [items, setItems] = useState<UploadItem[]>([])
   const [licenseAgreementAccepted, setLicenseAgreementAccepted] = useState(false)
+  const [recaptchaError, setRecaptchaError] = useState<string | null>(null)
   const [uploadedItems, setUploadedItems] = useState<UploadedItem[]>([])
   const [selectedPublicationIDs, setSelectedPublicationIDs] = useState<string[]>(
     fixedPublication ? [fixedPublication.id] : [],
@@ -100,6 +118,22 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
       uploadedItemsRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl))
     }
   }, [])
+
+  useEffect(() => {
+    if (!recaptchaSiteKey || document.querySelector('script[data-recaptcha-script="true"]')) {
+      return
+    }
+
+    const script = document.createElement('script')
+    script.async = true
+    script.dataset.recaptchaScript = 'true'
+    script.defer = true
+    script.src = `https://www.google.com/recaptcha/api.js?render=${encodeURIComponent(
+      recaptchaSiteKey,
+    )}`
+
+    document.head.appendChild(script)
+  }, [recaptchaSiteKey])
 
   const updateItem = (id: string, updates: Partial<UploadItem>) => {
     setItems((current) => current.map((item) => (item.id === id ? { ...item, ...updates } : item)))
@@ -171,6 +205,25 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
     )
   }
 
+  const getRecaptchaToken = async () => {
+    if (!recaptchaSiteKey) {
+      throw new Error('Upload protection is not configured.')
+    }
+
+    if (!window.grecaptcha) {
+      throw new Error('The reCAPTCHA check is still loading. Please try again.')
+    }
+
+    return new Promise<string>((resolve, reject) => {
+      window.grecaptcha?.ready(() => {
+        window.grecaptcha
+          ?.execute(recaptchaSiteKey, { action: recaptchaAction })
+          .then(resolve)
+          .catch(() => reject(new Error('The reCAPTCHA check failed. Please try again.')))
+      })
+    })
+  }
+
   const uploadFile = async (
     item: UploadItem,
     publicationIDs: string[],
@@ -205,6 +258,10 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
     })
 
     try {
+      const recaptchaToken = await getRecaptchaToken()
+
+      formData.append('recaptchaToken', recaptchaToken)
+
       const response = await fetch(endpoint, {
         body: formData,
         method: 'POST',
@@ -234,9 +291,15 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
       ])
       scheduleItemRemoval(item.id)
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Upload failed.'
+
+      if (message.toLowerCase().includes('recaptcha')) {
+        setRecaptchaError(message)
+      }
+
       updateItem(item.id, {
         isRemoving: false,
-        error: error instanceof Error ? error.message : 'Upload failed.',
+        error: message,
         progress: 'error',
       })
     }
@@ -529,14 +592,22 @@ export function UploadDropzone({ fixedPublication, publications }: UploadDropzon
               ))}
               <button
                 className="submitUploads"
-                disabled={isSubmitting || !hasPendingItems || !licenseAgreementAccepted}
+                disabled={
+                  isSubmitting || !hasPendingItems || !licenseAgreementAccepted || !recaptchaSiteKey
+                }
                 onClick={() => {
+                  setRecaptchaError(null)
                   void submitUploads()
                 }}
                 type="button"
               >
                 {isSubmitting ? 'Submitting' : 'Submit'}
               </button>
+              {(!recaptchaSiteKey || recaptchaError) && (
+                <p className="uploadSubmitError" role="status">
+                  {recaptchaError || 'Upload protection is not configured.'}
+                </p>
+              )}
             </div>
           </>
         )}

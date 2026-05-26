@@ -50,5 +50,11 @@ export default async function UploadPublicationPage({ params }: UploadPublicatio
     title: publication.title,
   }
 
-  return <UploadDropzone fixedPublication={fixedPublication} publications={[fixedPublication]} />
+  return (
+    <UploadDropzone
+      fixedPublication={fixedPublication}
+      publications={[fixedPublication]}
+      recaptchaSiteKey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
+    />
+  )
 }

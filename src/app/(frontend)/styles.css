@@ -731,6 +731,17 @@ p {
   color: var(--color-muted);
 }
 
+.uploadSubmitError {
+  justify-self: end;
+  max-width: 360px;
+  margin: 0;
+  color: var(--color-error);
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.4;
+  text-align: right;
+}
+
 .successfulUploads {
   margin-top: 26px;
 }
