@@ -4,6 +4,7 @@ import { addDataAndFileToRequest, type CollectionConfig, type PayloadRequest } f
 
 import type { Media as MediaType } from '@/payload-types'
 import { createZip } from '@/util/createZip'
+import { isGoogleDriveUploadConfigured, uploadFileToGoogleDrive } from '@/util/googleDrive'
 
 const getStringValues = (...values: unknown[]) => {
   const strings = values.flatMap((value) => {
@@ -194,6 +195,9 @@ const getUploadFileCopy = (file: NonNullable<PayloadRequest['file']>) => ({
   ...(file.tempFilePath ? { tempFilePath: file.tempFilePath } : {}),
 })
 
+const getGoogleDriveFolderID = (value: unknown) =>
+  typeof value === 'string' && value.trim() ? value.trim() : null
+
 export const Media: CollectionConfig = {
   slug: 'media',
   access: {
@@ -242,6 +246,7 @@ export const Media: CollectionConfig = {
         const publicationValues = getStringValues(req.data?.publications, req.data?.publication)
         const publicationIDs = getPublicationIDs(publicationValues)
         let folderID: number | undefined
+        const sourceFileData = Buffer.from(req.file.data)
 
         if (publicationIDs === null) {
           return Response.json(
@@ -251,6 +256,11 @@ export const Media: CollectionConfig = {
         }
 
         const publicationFolderIDs = new Map<number, number>()
+        let publicationDocs: {
+          googleDriveFolderId?: null | string
+          id: number
+          title: string
+        }[] = []
 
         if (publicationIDs.length > 0) {
           if (publicationIDs.length !== publicationValues.length) {
@@ -268,6 +278,7 @@ export const Media: CollectionConfig = {
             select: {
               showOnFrontend: true,
               title: true,
+              googleDriveFolderId: true,
             },
             where: {
               and: [
@@ -285,14 +296,16 @@ export const Media: CollectionConfig = {
             },
           })
 
-          if (publications.docs.length !== publicationIDs.length) {
+          publicationDocs = publications.docs
+
+          if (publicationDocs.length !== publicationIDs.length) {
             return Response.json(
               { message: 'One or more publications are not available for uploads.' },
               { status: 400 },
             )
           }
 
-          for (const publication of publications.docs) {
+          for (const publication of publicationDocs) {
             publicationFolderIDs.set(publication.id, await getMediaFolderID(req, publication.title))
           }
 
@@ -309,11 +322,18 @@ export const Media: CollectionConfig = {
           publicationIDs.length > 1
             ? publicationIDs.map((publicationID) => ({
                 folder: publicationFolderIDs.get(publicationID),
+                googleDriveFolderId: getGoogleDriveFolderID(
+                  publicationDocs.find((publication) => publication.id === publicationID)
+                    ?.googleDriveFolderId,
+                ),
                 publications: [publicationID],
               }))
             : [
                 {
                   folder: folderID,
+                  googleDriveFolderId: getGoogleDriveFolderID(
+                    publicationDocs[0]?.googleDriveFolderId,
+                  ),
                   publications: publicationIDs,
                 },
               ]
@@ -332,6 +352,50 @@ export const Media: CollectionConfig = {
           })
 
           results.push(result)
+
+          if (mediaData.googleDriveFolderId) {
+            if (!isGoogleDriveUploadConfigured()) {
+              return Response.json(
+                {
+                  message:
+                    'This publication has a Google Drive folder selected, but Drive uploads are not configured.',
+                },
+                { status: 500 },
+              )
+            }
+
+            try {
+              const driveFile = await uploadFileToGoogleDrive({
+                data: sourceFileData,
+                folderId: mediaData.googleDriveFolderId,
+                mimeType: req.file.mimetype,
+                name: result.filename || req.file.name,
+              })
+
+              const updatedResult = await req.payload.update({
+                collection: 'media',
+                data: {
+                  googleDriveFileId: driveFile.id,
+                  googleDriveFileUrl: driveFile.webViewLink,
+                },
+                id: result.id,
+                req,
+              })
+
+              results[results.length - 1] = updatedResult
+            } catch (error) {
+              req.payload.logger.error({
+                err: error,
+                mediaID: result.id,
+                msg: 'Google Drive upload failed',
+              })
+
+              return Response.json(
+                { message: 'The file was saved, but the Google Drive upload failed.' },
+                { status: 502 },
+              )
+            }
+          }
         }
 
         const [result] = results
@@ -484,6 +548,22 @@ export const Media: CollectionConfig = {
       label: 'Submission agreement accepted',
       admin: {
         description: 'Checked when a public uploader accepted the submission terms.',
+        readOnly: true,
+      },
+    },
+    {
+      name: 'googleDriveFileId',
+      type: 'text',
+      label: 'Google Drive file ID',
+      admin: {
+        readOnly: true,
+      },
+    },
+    {
+      name: 'googleDriveFileUrl',
+      type: 'text',
+      label: 'Google Drive file URL',
+      admin: {
         readOnly: true,
       },
     },

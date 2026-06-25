@@ -55,6 +55,57 @@ export const Publications: CollectionConfig = {
       label: 'Show on front end',
     },
     {
+      type: 'collapsible',
+      label: 'Google Drive storage',
+      admin: {
+        initCollapsed: false,
+      },
+      fields: [
+        {
+          name: 'googleDriveFolderPicker',
+          type: 'ui',
+          admin: {
+            components: {
+              Field: '/components/GoogleDriveFolderPicker#GoogleDriveFolderPicker',
+            },
+          },
+        },
+        {
+          name: 'googleDriveFolderName',
+          type: 'text',
+          label: 'Google Drive folder name',
+          admin: {
+            readOnly: true,
+          },
+        },
+        {
+          name: 'googleDriveFolderUrl',
+          type: 'text',
+          label: 'Google Drive folder URL',
+          admin: {
+            readOnly: true,
+          },
+        },
+        {
+          name: 'googleDriveFolderId',
+          type: 'text',
+          label: 'Google Drive folder ID',
+          admin: {
+            readOnly: true,
+          },
+        },
+        {
+          name: 'googleDriveId',
+          type: 'text',
+          label: 'Google shared drive ID',
+          admin: {
+            description: 'Present when the selected folder is in a shared drive.',
+            readOnly: true,
+          },
+        },
+      ],
+    },
+    {
       name: 'media',
       type: 'join',
       collection: 'media',

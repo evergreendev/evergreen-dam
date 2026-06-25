@@ -166,6 +166,13 @@ export interface Publication {
   generateSlug?: boolean | null;
   slug: string;
   showOnFrontend?: boolean | null;
+  googleDriveFolderName?: string | null;
+  googleDriveFolderUrl?: string | null;
+  googleDriveFolderId?: string | null;
+  /**
+   * Present when the selected folder is in a shared drive.
+   */
+  googleDriveId?: string | null;
   media?: {
     docs?: (number | Media)[];
     hasNextPage?: boolean;
@@ -193,6 +200,8 @@ export interface Media {
    * Checked when a public uploader accepted the submission terms.
    */
   licenseAgreement?: boolean | null;
+  googleDriveFileId?: string | null;
+  googleDriveFileUrl?: string | null;
   folder?: (number | null) | FolderInterface;
   updatedAt: string;
   createdAt: string;
@@ -345,6 +354,10 @@ export interface PublicationsSelect<T extends boolean = true> {
   generateSlug?: T;
   slug?: T;
   showOnFrontend?: T;
+  googleDriveFolderName?: T;
+  googleDriveFolderUrl?: T;
+  googleDriveFolderId?: T;
+  googleDriveId?: T;
   media?: T;
   updatedAt?: T;
   createdAt?: T;
@@ -366,6 +379,8 @@ export interface MediaSelect<T extends boolean = true> {
         email?: T;
       };
   licenseAgreement?: T;
+  googleDriveFileId?: T;
+  googleDriveFileUrl?: T;
   folder?: T;
   updatedAt?: T;
   createdAt?: T;
