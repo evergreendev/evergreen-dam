@@ -190,6 +190,7 @@ export interface Media {
   publications?: (number | Publication)[] | null;
   alt: string;
   photoCredit?: string | null;
+  albumName?: string | null;
   contact?: {
     firstName?: string | null;
     lastName?: string | null;
@@ -370,6 +371,7 @@ export interface MediaSelect<T extends boolean = true> {
   publications?: T;
   alt?: T;
   photoCredit?: T;
+  albumName?: T;
   contact?:
     | T
     | {

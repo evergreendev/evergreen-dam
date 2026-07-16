@@ -20,7 +20,13 @@ type ContactInfo = {
   lastName: string
 }
 
+type Album = {
+  id: string
+  name: string
+}
+
 type UploadItem = {
+  albumID: string
   error?: string
   file: File
   id: string
@@ -32,6 +38,7 @@ type UploadItem = {
 }
 
 type UploadedItem = {
+  albumName: string
   fileName: string
   id: string
   photoCredit: string
@@ -47,6 +54,14 @@ type UploadDropzoneProps = {
   fixedPublication?: PublicationOption
   publications: PublicationOption[]
   recaptchaSiteKey?: string
+}
+
+type UploadResponseBody = {
+  errors?: {
+    message?: string
+  }[]
+  message?: string
+  url?: string | null
 }
 
 const endpoint = '/api/media/public-upload'
@@ -70,7 +85,13 @@ const formatBytes = (bytes: number) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-const createUploadItem = (file: File): UploadItem => ({
+const createAlbum = (index: number): Album => ({
+  id: `album-${crypto.randomUUID()}`,
+  name: `Album ${index + 1}`,
+})
+
+const createUploadItem = (file: File, albumID: string): UploadItem => ({
+  albumID,
   file,
   id: `${file.name}-${file.size}-${file.lastModified}-${crypto.randomUUID()}`,
   photoCredit: '',
@@ -84,15 +105,21 @@ export function UploadDropzone({
   recaptchaSiteKey,
 }: UploadDropzoneProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const albumsRef = useRef<Album[]>([])
   const itemsRef = useRef<UploadItem[]>([])
   const removalTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>[]>>(new Map())
   const uploadedItemsRef = useRef<UploadedItem[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [albums, setAlbums] = useState<Album[]>([])
   const [contact, setContact] = useState<ContactInfo>(emptyContact)
+  const [draggedItemID, setDraggedItemID] = useState<string | null>(null)
+  const [fileInputAlbumID, setFileInputAlbumID] = useState<string | null>(null)
   const [items, setItems] = useState<UploadItem[]>([])
   const [licenseAgreementAccepted, setLicenseAgreementAccepted] = useState(false)
   const [recaptchaError, setRecaptchaError] = useState<string | null>(null)
+  const [openAlbumMenuItemID, setOpenAlbumMenuItemID] = useState<string | null>(null)
+  const [validationError, setValidationError] = useState<string | null>(null)
   const [uploadedItems, setUploadedItems] = useState<UploadedItem[]>([])
   const [selectedPublicationIDs, setSelectedPublicationIDs] = useState<string[]>(
     fixedPublication ? [fixedPublication.id] : [],
@@ -100,6 +127,29 @@ export function UploadDropzone({
   const hasPendingItems = items.some(
     (item) => item.progress === 'ready' || item.progress === 'error',
   )
+  const uploadableItemCount = items.filter(
+    (item) => item.progress === 'ready' || item.progress === 'uploading' || item.progress === 'complete',
+  ).length
+  const completedItemCount = items.filter((item) => item.progress === 'complete').length
+  const uploadProgressPercent =
+    uploadableItemCount > 0 ? Math.round((completedItemCount / uploadableItemCount) * 100) : 0
+  const pendingAlbumIDs = new Set(
+    items
+      .filter((item) => item.progress === 'ready' || item.progress === 'error')
+      .map((item) => item.albumID),
+  )
+  const hasUnnamedPendingAlbum = albums.some(
+    (album) => pendingAlbumIDs.has(album.id) && album.name.trim() === '',
+  )
+  const hasPendingItemWithoutPhotoCredit = items.some(
+    (item) =>
+      (item.progress === 'ready' || item.progress === 'error') && item.photoCredit.trim() === '',
+  )
+  const canAttemptSubmit = hasPendingItems && licenseAgreementAccepted && Boolean(recaptchaSiteKey)
+
+  useEffect(() => {
+    albumsRef.current = albums
+  }, [albums])
 
   useEffect(() => {
     itemsRef.current = items
@@ -139,6 +189,38 @@ export function UploadDropzone({
     setItems((current) => current.map((item) => (item.id === id ? { ...item, ...updates } : item)))
   }
 
+  const updateAlbum = (id: string, updates: Partial<Album>) => {
+    setValidationError(null)
+    setAlbums((current) =>
+      current.map((album) => (album.id === id ? { ...album, ...updates } : album)),
+    )
+  }
+
+  const addAlbum = () => {
+    const album = createAlbum(albumsRef.current.length)
+
+    setAlbums((current) => [...current, album])
+
+    return album.id
+  }
+
+  const addAlbumForItem = (itemID: string) => {
+    const albumID = addAlbum()
+
+    moveItemToAlbum(itemID, albumID)
+  }
+
+  const moveItemToAlbum = (itemID: string, albumID: string) => {
+    setOpenAlbumMenuItemID(null)
+    setItems((current) =>
+      current.map((item) =>
+        item.id === itemID && (item.progress === 'ready' || item.progress === 'error')
+          ? { ...item, albumID }
+          : item,
+      ),
+    )
+  }
+
   const fillEmptyPhotoCredits = (sourceID: string) => {
     setItems((current) => {
       const sourceCredit = current.find((item) => item.id === sourceID)?.photoCredit
@@ -156,7 +238,12 @@ export function UploadDropzone({
   }
 
   const updateContact = (updates: Partial<ContactInfo>) => {
+    setValidationError(null)
     setContact((current) => ({ ...current, ...updates }))
+  }
+
+  const toggleAlbumMenu = (itemID: string) => {
+    setOpenAlbumMenuItemID((current) => (current === itemID ? null : itemID))
   }
 
   const clearRemovalTimers = (id: string) => {
@@ -227,6 +314,7 @@ export function UploadDropzone({
   const uploadFile = async (
     item: UploadItem,
     publicationIDs: string[],
+    uploadAlbumName: string,
     contactInfo: ContactInfo,
     agreementAccepted: boolean,
   ) => {
@@ -243,6 +331,7 @@ export function UploadDropzone({
         '_payload',
         JSON.stringify({
           alt,
+          albumName: uploadAlbumName,
           photoCredit: item.photoCredit,
           contact: contactInfo,
           licenseAgreement: agreementAccepted,
@@ -250,6 +339,7 @@ export function UploadDropzone({
           recaptchaToken,
         }),
       )
+      formData.append('albumName', uploadAlbumName)
       formData.append('alt', alt)
       formData.append('photoCredit', item.photoCredit)
       formData.append('contact.firstName', contactInfo.firstName)
@@ -267,13 +357,24 @@ export function UploadDropzone({
         method: 'POST',
       })
 
-      const result = (await response.json().catch(() => null)) as {
-        message?: string
-        url?: string | null
-      } | null
+      const responseText = await response.text()
+      let result: null | UploadResponseBody = null
+
+      if (responseText) {
+        try {
+          result = JSON.parse(responseText) as UploadResponseBody
+        } catch {
+          result = { message: responseText }
+        }
+      }
 
       if (!response.ok) {
-        throw new Error(result?.message || 'Upload failed.')
+        const errorMessages = result?.errors
+          ?.map((error) => error.message)
+          .filter((message): message is string => Boolean(message))
+        const message = result?.message || errorMessages?.join(' ') || response.statusText
+
+        throw new Error(`HTTP ${response.status}: ${message || 'Upload failed.'}`)
       }
 
       updateItem(item.id, {
@@ -282,6 +383,7 @@ export function UploadDropzone({
       })
       setUploadedItems((current) => [
         {
+          albumName: uploadAlbumName,
           fileName: item.file.name,
           id: `${item.id}-uploaded`,
           photoCredit: item.photoCredit,
@@ -305,13 +407,15 @@ export function UploadDropzone({
     }
   }
 
-  const addFiles = (fileList: FileList | File[]) => {
+  const addFiles = (fileList: FileList | File[], targetAlbumID?: string) => {
     const imageFiles = Array.from(fileList).filter((file) => file.type.startsWith('image/'))
-    const nextItems = imageFiles.map(createUploadItem)
 
-    if (nextItems.length === 0) {
+    if (imageFiles.length === 0) {
       return
     }
+
+    const albumID = targetAlbumID || albumsRef.current[0]?.id || addAlbum()
+    const nextItems = imageFiles.map((file) => createUploadItem(file, albumID))
 
     itemsRef.current
       .filter((item) => item.progress === 'complete')
@@ -321,10 +425,29 @@ export function UploadDropzone({
   }
 
   const submitUploads = async () => {
+    setOpenAlbumMenuItemID(null)
+    const businessName = contact.businessName.trim()
+
     if (!licenseAgreementAccepted) {
       return
     }
 
+    if (!businessName) {
+      setValidationError('Enter a business name before submitting.')
+      return
+    }
+
+    if (hasUnnamedPendingAlbum) {
+      setValidationError('Name each album before submitting.')
+      return
+    }
+
+    if (hasPendingItemWithoutPhotoCredit) {
+      setValidationError('Enter a photo credit for each pending upload.')
+      return
+    }
+
+    setValidationError(null)
     setIsSubmitting(true)
     const publicationIDs = selectedPublicationIDs
     const contactForUploads = contact
@@ -335,9 +458,13 @@ export function UploadDropzone({
         const currentItem = itemsRef.current.find((current) => current.id === item.id)
 
         if (currentItem && (currentItem.progress === 'ready' || currentItem.progress === 'error')) {
+          const itemAlbumName =
+            albumsRef.current.find((album) => album.id === currentItem.albumID)?.name.trim() || ''
+
           await uploadFile(
             currentItem,
             publicationIDs,
+            itemAlbumName,
             contactForUploads,
             agreementAcceptedForUploads,
           )
@@ -408,7 +535,10 @@ export function UploadDropzone({
 
         <button
           className={`dropzone${isDragging ? ' isDragging' : ''}`}
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => {
+            setFileInputAlbumID(null)
+            fileInputRef.current?.click()
+          }}
           onDragEnter={(event) => {
             event.preventDefault()
             setIsDragging(true)
@@ -441,7 +571,8 @@ export function UploadDropzone({
           multiple
           onChange={(event) => {
             if (event.target.files) {
-              addFiles(event.target.files)
+              addFiles(event.target.files, fileInputAlbumID ?? undefined)
+              setFileInputAlbumID(null)
               event.target.value = ''
             }
           }}
@@ -476,11 +607,12 @@ export function UploadDropzone({
                 />
               </label>
               <label>
-                <span>Business name</span>
+                <span className="requiredLabel">Business name</span>
                 <input
                   autoComplete="organization"
                   name="contactBusinessName"
                   onChange={(event) => updateContact({ businessName: event.target.value })}
+                  required
                   suppressHydrationWarning
                   type="text"
                   value={contact.businessName}
@@ -517,99 +649,261 @@ export function UploadDropzone({
             </section>
 
             <div className="uploadList" aria-live="polite">
-              {items.map((item) => (
-                <article
-                  className={`uploadItem${item.isRemoving ? ' isRemoving' : ''}`}
-                  key={item.id}
+              <div className="albumListHeader">
+                <div>
+                  <h2>Pending uploads</h2>
+                  <p>
+                    Drag files into the album section they belong in. Folders will be created as
+                    Business name / Album name.
+                  </p>
+                </div>
+                <button
+                  className="addAlbum"
+                  disabled={isSubmitting}
+                  onClick={addAlbum}
+                  type="button"
                 >
-                  <img alt="" className="uploadPreview" src={item.previewUrl} />
-                  <div className="uploadDetails">
-                    <div>
-                      <h2>{item.file.name}</h2>
-                      <p>{formatBytes(item.file.size)}</p>
-                    </div>
-                    {item.progress === 'error' ? (
-                      <div className="uploadActions">
-                        <span className="uploadStatus error">{item.error}</span>
-                        <button
-                          className="removeUpload"
+                  + New album
+                </button>
+              </div>
+
+              {albums.map((album, albumIndex) => {
+                const albumItems = items.filter((item) => item.albumID === album.id)
+
+                return (
+                  <section
+                    className={`albumSection${draggedItemID ? ' isDropTarget' : ''}`}
+                    key={album.id}
+                    onDragOver={(event) => {
+                      event.preventDefault()
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault()
+                      if (event.dataTransfer.files.length > 0) {
+                        addFiles(event.dataTransfer.files, album.id)
+                        setDraggedItemID(null)
+                        return
+                      }
+
+                      const itemID = event.dataTransfer.getData('text/plain')
+
+                      if (itemID) {
+                        moveItemToAlbum(itemID, album.id)
+                      }
+
+                      setDraggedItemID(null)
+                    }}
+                  >
+                    <div className="albumSectionHeader">
+                      <label>
+                        <span className="requiredLabel">{`Album ${albumIndex + 1}`}</span>
+                        <input
+                          autoComplete="off"
                           disabled={isSubmitting}
-                          onClick={() => removeItem(item.id)}
-                          type="button"
-                        >
-                          Remove
-                        </button>
+                          name={`albumName-${album.id}`}
+                          onChange={(event) => updateAlbum(album.id, { name: event.target.value })}
+                          placeholder="Album name"
+                          required
+                          suppressHydrationWarning
+                          type="text"
+                          value={album.name}
+                        />
+                      </label>
+                      <span className="albumCount">
+                        {albumItems.length} {albumItems.length === 1 ? 'file' : 'files'}
+                      </span>
+                      <button
+                        className="uploadAlbumFiles"
+                        disabled={isSubmitting}
+                        onClick={() => {
+                          setFileInputAlbumID(album.id)
+                          fileInputRef.current?.click()
+                        }}
+                        type="button"
+                      >
+                        Add files
+                      </button>
+                    </div>
+
+                    {albumItems.length === 0 ? (
+                      <div className="emptyAlbumDropTarget">
+                        Drop files or pending uploads here to add them to this album.
                       </div>
                     ) : (
-                      <div className="uploadActions">
-                        <span className={`uploadStatus ${item.progress}`}>
-                          {item.progress === 'ready' && 'Ready'}
-                          {item.progress === 'uploading' && 'Uploading'}
-                          {item.progress === 'complete' && 'Uploaded'}
-                        </span>
-                        {item.progress === 'ready' && (
-                          <button
-                            className="removeUpload"
-                            disabled={isSubmitting}
-                            onClick={() => removeItem(item.id)}
-                            type="button"
+                      <div className="albumUploadList">
+                        {albumItems.map((item) => (
+                          <article
+                            className={`uploadItem${item.isRemoving ? ' isRemoving' : ''}`}
+                            draggable={
+                              !isSubmitting &&
+                              (item.progress === 'ready' || item.progress === 'error')
+                            }
+                            key={item.id}
+                            onDragEnd={() => setDraggedItemID(null)}
+                            onDragStart={(event) => {
+                              event.dataTransfer.effectAllowed = 'move'
+                              event.dataTransfer.setData('text/plain', item.id)
+                              setDraggedItemID(item.id)
+                            }}
                           >
-                            Remove
-                          </button>
-                        )}
+                            <img alt="" className="uploadPreview" src={item.previewUrl} />
+                            <div className="uploadDetails">
+                              <div>
+                                <h2>{item.file.name}</h2>
+                                <p>{formatBytes(item.file.size)}</p>
+                              </div>
+                              {item.progress === 'error' ? (
+                                <div className="uploadActions">
+                                  <span className="uploadStatus error">{item.error}</span>
+                                  <button
+                                    className="removeUpload"
+                                    disabled={isSubmitting}
+                                    onClick={() => removeItem(item.id)}
+                                    type="button"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="uploadActions">
+                                  <span className={`uploadStatus ${item.progress}`}>
+                                    {item.progress === 'ready' && 'Ready'}
+                                    {item.progress === 'uploading' && 'Uploading'}
+                                    {item.progress === 'complete' && 'Uploaded'}
+                                  </span>
+                                  {item.progress === 'ready' && (
+                                    <button
+                                      className="removeUpload"
+                                      disabled={isSubmitting}
+                                      onClick={() => removeItem(item.id)}
+                                      type="button"
+                                    >
+                                      Remove
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            <div className="creditField">
+                              <label>
+                                <span className="requiredLabel">Photo credit</span>
+                                <input
+                                  name={`photoCredit-${item.id}`}
+                                  onChange={(event) =>
+                                    updateItem(item.id, { photoCredit: event.target.value })
+                                  }
+                                  required
+                                  suppressHydrationWarning
+                                  type="text"
+                                  value={item.photoCredit}
+                                />
+                              </label>{' '}
+                              {item.photoCredit.trim() !== '' &&
+                                items.some(
+                                  (otherItem) =>
+                                    otherItem.id !== item.id && otherItem.photoCredit.trim() === '',
+                                ) && (
+                                  <button
+                                    className="fillEmptyCredits"
+                                    disabled={isSubmitting}
+                                    onClick={() => fillEmptyPhotoCredits(item.id)}
+                                    type="button"
+                                  >
+                                    Copy value to all empty Photo Credit fields
+                                  </button>
+                                )}
+                              <div className="albumMoveControl">
+                                <button
+                                  aria-expanded={openAlbumMenuItemID === item.id}
+                                  className="moveAlbumButton"
+                                  disabled={
+                                    isSubmitting ||
+                                    !(item.progress === 'ready' || item.progress === 'error')
+                                  }
+                                  onClick={() => toggleAlbumMenu(item.id)}
+                                  type="button"
+                                >
+                                  Move to album
+                                </button>
+                                {openAlbumMenuItemID === item.id && (
+                                  <div className="albumMoveMenu">
+                                    {albums.map((option) => (
+                                      <button
+                                        className="albumMoveOption"
+                                        disabled={option.id === item.albumID}
+                                        key={option.id}
+                                        onClick={() => moveItemToAlbum(item.id, option.id)}
+                                        type="button"
+                                      >
+                                        {option.name.trim() || 'Unnamed album'}
+                                      </button>
+                                    ))}
+                                    <button
+                                      className="albumMoveOption"
+                                      onClick={() => addAlbumForItem(item.id)}
+                                      type="button"
+                                    >
+                                      Move to new album
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </article>
+                        ))}
                       </div>
                     )}
-                  </div>
-                  <div className="creditField">
-                    <label>
-                      <span>Photo credit</span>
-                      <input
-                        name={`photoCredit-${item.id}`}
-                        onChange={(event) =>
-                          updateItem(item.id, { photoCredit: event.target.value })
-                        }
-                        suppressHydrationWarning
-                        type="text"
-                        value={item.photoCredit}
-                      />
-                    </label>
-                    {item.photoCredit.trim() !== '' &&
-                      items.some(
-                        (otherItem) =>
-                          otherItem.id !== item.id && otherItem.photoCredit.trim() === '',
-                      ) && (
-                        <button
-                          className="fillEmptyCredits"
-                          disabled={isSubmitting}
-                          onClick={() => fillEmptyPhotoCredits(item.id)}
-                          type="button"
-                        >
-                          Copy value to all empty Photo Credit fields
-                        </button>
-                      )}
-                  </div>
-                </article>
-              ))}
+                  </section>
+                )
+              })}
+
+              <button
+                className="addAlbum bottomAddAlbum"
+                disabled={isSubmitting}
+                onClick={addAlbum}
+                type="button"
+              >
+                + New album
+              </button>
+
               <button
                 className="submitUploads"
-                disabled={
-                  isSubmitting || !hasPendingItems || !licenseAgreementAccepted || !recaptchaSiteKey
-                }
+                disabled={isSubmitting || !canAttemptSubmit}
                 onClick={() => {
                   setRecaptchaError(null)
                   void submitUploads()
                 }}
                 type="button"
               >
-                {isSubmitting ? 'Submitting' : 'Submit'}
+                {isSubmitting && <span className="submitSpinner" aria-hidden="true" />}
+                {isSubmitting ? 'Uploading' : 'Submit'}
               </button>
               {(!recaptchaSiteKey || recaptchaError) && (
                 <p className="uploadSubmitError" role="status">
                   {recaptchaError || 'Upload protection is not configured.'}
                 </p>
               )}
+              {validationError && (
+                <p className="uploadSubmitError" role="status">
+                  {validationError}
+                </p>
+              )}
             </div>
           </>
+        )}
+
+        {isSubmitting && uploadableItemCount > 0 && (
+          <section className="uploadProgress" aria-label="Upload progress">
+            <div className="uploadProgressHeader">
+              <span>Uploading</span>
+              <span>
+                {completedItemCount} of {uploadableItemCount}
+              </span>
+            </div>
+            <div className="uploadProgressTrack">
+              <div className="uploadProgressFill" style={{ width: `${uploadProgressPercent}%` }} />
+            </div>
+          </section>
         )}
 
         {uploadedItems.length > 0 && (
@@ -621,6 +915,7 @@ export function UploadDropzone({
                   <img alt="" src={item.previewUrl} />
                   <div>
                     <h3>{item.fileName}</h3>
+                    {item.albumName && <p>Album: {item.albumName}</p>}
                     {item.photoCredit && <p>Photo Credit: {item.photoCredit}</p>}
                   </div>
                 </article>

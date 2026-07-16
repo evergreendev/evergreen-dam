@@ -4,7 +4,11 @@ import { addDataAndFileToRequest, type CollectionConfig, type PayloadRequest } f
 
 import type { Media as MediaType } from '@/payload-types'
 import { createZip } from '@/util/createZip'
-import { isGoogleDriveUploadConfigured, uploadFileToGoogleDrive } from '@/util/googleDrive'
+import {
+  findOrCreateGoogleDriveFolder,
+  isGoogleDriveUploadConfigured,
+  uploadFileToGoogleDrive,
+} from '@/util/googleDrive'
 
 const getStringValues = (...values: unknown[]) => {
   const strings = values.flatMap((value) => {
@@ -53,6 +57,7 @@ const isAccepted = (value: unknown) => value === true || value === 'true' || val
 
 const recaptchaAction = process.env.RECAPTCHA_ACTION || 'public_upload'
 const recaptchaMinimumScore = Number(process.env.RECAPTCHA_MIN_SCORE || 0.5)
+const mediaCreateRetryDelaysMS = [300, 900]
 
 type RecaptchaSiteVerifyResponse = {
   action?: string
@@ -153,12 +158,21 @@ const getContactData = (data: PayloadRequest['data']) => {
   }
 }
 
-const getMediaFolderID = async (req: PayloadRequest, folderName: string) => {
+const getMediaFolderID = async (
+  req: PayloadRequest,
+  folderName: string,
+  parentFolderID?: number,
+) => {
   const existingFolders = await req.payload.find({
     collection: 'payload-folders',
     depth: 0,
     limit: 25,
     req,
+    select: {
+      folder: true,
+      folderType: true,
+      name: true,
+    },
     where: {
       name: {
         equals: folderName,
@@ -167,8 +181,16 @@ const getMediaFolderID = async (req: PayloadRequest, folderName: string) => {
   })
   const folder = existingFolders.docs.find((doc) => {
     const folderType = 'folderType' in doc && Array.isArray(doc.folderType) ? doc.folderType : []
+    const parentFolder = 'folder' in doc ? doc.folder : null
+    const parentID =
+      typeof parentFolder === 'number'
+        ? parentFolder
+        : parentFolder && typeof parentFolder === 'object'
+          ? parentFolder.id
+          : undefined
+    const isSameParent = parentFolderID ? parentID === parentFolderID : !parentID
 
-    return folderType.length === 0 || folderType.includes('media')
+    return isSameParent && (folderType.length === 0 || folderType.includes('media'))
   })
 
   if (folder) {
@@ -179,6 +201,7 @@ const getMediaFolderID = async (req: PayloadRequest, folderName: string) => {
     collection: 'payload-folders',
     data: {
       folderType: ['media'],
+      ...(parentFolderID ? { folder: parentFolderID } : {}),
       name: folderName,
     },
     req,
@@ -195,8 +218,39 @@ const getUploadFileCopy = (file: NonNullable<PayloadRequest['file']>) => ({
   ...(file.tempFilePath ? { tempFilePath: file.tempFilePath } : {}),
 })
 
+const copyUploadFile = (file: ReturnType<typeof getUploadFileCopy>) => ({
+  ...file,
+  data: Buffer.from(file.data),
+})
+
 const getGoogleDriveFolderID = (value: unknown) =>
   typeof value === 'string' && value.trim() ? value.trim() : null
+
+const normalizeFolderName = (value: unknown) => {
+  if (typeof value !== 'string') {
+    return ''
+  }
+
+  return value.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim()
+}
+
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error) {
+    return error.message
+  }
+
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message
+
+    if (typeof message === 'string') {
+      return message
+    }
+  }
+
+  return 'Unknown error'
+}
+
+const sleep = (delayMS: number) => new Promise((resolve) => setTimeout(resolve, delayMS))
 
 export const Media: CollectionConfig = {
   slug: 'media',
@@ -210,7 +264,7 @@ export const Media: CollectionConfig = {
     components: {
       beforeListTable: ['/components/DownloadSelectedMediaButton#DownloadSelectedMediaButton'],
     },
-    defaultColumns: ['filename', 'alt', 'photoCredit', 'publications', 'createdAt'],
+    defaultColumns: ['filename', 'alt', 'albumName', 'photoCredit', 'publications', 'createdAt'],
   },
   endpoints: [
     {
@@ -243,10 +297,33 @@ export const Media: CollectionConfig = {
           )
         }
 
+        const contactData = getContactData(req.data)
+        const businessFolderName = normalizeFolderName(contactData.businessName)
+        const albumName = normalizeFolderName(req.data?.albumName)
+        const photoCredit = getTrimmedString(req.data?.photoCredit)
         const publicationValues = getStringValues(req.data?.publications, req.data?.publication)
         const publicationIDs = getPublicationIDs(publicationValues)
         let folderID: number | undefined
-        const sourceFileData = Buffer.from(req.file.data)
+        const sourceUploadFile = getUploadFileCopy(req.file)
+        const sourceFileData = Buffer.from(sourceUploadFile.data)
+
+        if (!businessFolderName) {
+          return Response.json(
+            { message: 'Business name is required before uploading.' },
+            { status: 400 },
+          )
+        }
+
+        if (!albumName) {
+          return Response.json({ message: 'Album name is required before uploading.' }, { status: 400 })
+        }
+
+        if (!photoCredit) {
+          return Response.json(
+            { message: 'Photo credit is required before uploading.' },
+            { status: 400 },
+          )
+        }
 
         if (publicationIDs === null) {
           return Response.json(
@@ -312,44 +389,144 @@ export const Media: CollectionConfig = {
           folderID = publicationFolderIDs.get(publicationIDs[0])
         }
 
-        const baseData = {
-          alt: getTrimmedString(req.data?.alt) || req.file.name,
-          contact: getContactData(req.data),
-          licenseAgreement: true,
-          photoCredit: getTrimmedString(req.data?.photoCredit),
+        const resolvePayloadFolderID = async (publicationID?: number) => {
+          const publicationFolderID =
+            typeof publicationID === 'number' ? publicationFolderIDs.get(publicationID) : folderID
+          const businessFolderID = await getMediaFolderID(
+            req,
+            businessFolderName,
+            publicationFolderID,
+          )
+
+          return getMediaFolderID(req, albumName, businessFolderID)
         }
-        const mediaToCreate =
-          publicationIDs.length > 1
-            ? publicationIDs.map((publicationID) => ({
-                folder: publicationFolderIDs.get(publicationID),
-                googleDriveFolderId: getGoogleDriveFolderID(
-                  publicationDocs.find((publication) => publication.id === publicationID)
-                    ?.googleDriveFolderId,
-                ),
-                publications: [publicationID],
-              }))
-            : [
-                {
-                  folder: folderID,
-                  googleDriveFolderId: getGoogleDriveFolderID(
-                    publicationDocs[0]?.googleDriveFolderId,
-                  ),
-                  publications: publicationIDs,
-                },
-              ]
+
+        const resolveGoogleDriveFolderID = async (publicationFolderID?: null | string) => {
+          const googleDriveFolderID = getGoogleDriveFolderID(publicationFolderID)
+
+          if (!googleDriveFolderID) {
+            return googleDriveFolderID
+          }
+
+          if (!isGoogleDriveUploadConfigured()) {
+            return googleDriveFolderID
+          }
+
+          const businessFolder = await findOrCreateGoogleDriveFolder({
+            name: businessFolderName,
+            parentFolderId: googleDriveFolderID,
+          })
+          const albumFolder = await findOrCreateGoogleDriveFolder({
+            name: albumName,
+            parentFolderId: businessFolder.id,
+          })
+
+          return albumFolder.id
+        }
+
+        const baseData = {
+          albumName,
+          alt: getTrimmedString(req.data?.alt) || req.file.name,
+          contact: contactData,
+          licenseAgreement: true,
+          photoCredit,
+        }
+        let mediaToCreate: {
+          folder?: number
+          googleDriveFolderId: null | string
+          publications: number[]
+        }[]
+
+        try {
+          mediaToCreate =
+            publicationIDs.length > 1
+              ? await Promise.all(
+                  publicationIDs.map(async (publicationID) => ({
+                    folder: await resolvePayloadFolderID(publicationID),
+                    googleDriveFolderId: await resolveGoogleDriveFolderID(
+                      publicationDocs.find((publication) => publication.id === publicationID)
+                        ?.googleDriveFolderId,
+                    ),
+                    publications: [publicationID],
+                  })),
+                )
+              : [
+                  {
+                    folder: await resolvePayloadFolderID(publicationIDs[0]),
+                    googleDriveFolderId: await resolveGoogleDriveFolderID(
+                      publicationDocs[0]?.googleDriveFolderId,
+                    ),
+                    publications: publicationIDs,
+                  },
+                ]
+        } catch (error) {
+          req.payload.logger.error({
+            err: error,
+            msg: 'Upload album folder preparation failed',
+          })
+
+          return Response.json(
+            { message: 'The album folder could not be prepared. Please try again.' },
+            { status: 502 },
+          )
+        }
         const results: MediaType[] = []
 
         for (const mediaData of mediaToCreate) {
-          const result = await req.payload.create({
-            collection: 'media',
-            data: {
-              ...baseData,
-              ...(mediaData.folder ? { folder: mediaData.folder } : {}),
+          let result: MediaType | null = null
+          let lastCreateError: unknown
+
+          for (let attempt = 0; attempt <= mediaCreateRetryDelaysMS.length; attempt += 1) {
+            try {
+              result = await req.payload.create({
+                collection: 'media',
+                data: {
+                  ...baseData,
+                  ...(mediaData.folder ? { folder: mediaData.folder } : {}),
+                  publications: mediaData.publications,
+                },
+                file: copyUploadFile(sourceUploadFile),
+                req,
+              })
+              lastCreateError = null
+              break
+            } catch (error) {
+              lastCreateError = error
+
+              if (attempt >= mediaCreateRetryDelaysMS.length) {
+                break
+              }
+
+              await sleep(mediaCreateRetryDelaysMS[attempt])
+            }
+          }
+
+          if (lastCreateError) {
+            req.payload.logger.error({
+              albumName,
+              businessFolderName,
+              err: lastCreateError,
+              folderID: mediaData.folder,
+              msg: 'Payload media create failed',
               publications: mediaData.publications,
-            },
-            file: results.length === 0 ? req.file : getUploadFileCopy(req.file),
-            req,
-          })
+            })
+
+            return Response.json(
+              {
+                message: `The file could not be saved in Payload: ${getErrorMessage(
+                  lastCreateError,
+                )}`,
+              },
+              { status: 400 },
+            )
+          }
+
+          if (!result) {
+            return Response.json(
+              { message: 'The file could not be saved in Payload.' },
+              { status: 400 },
+            )
+          }
 
           results.push(result)
 
@@ -367,9 +544,11 @@ export const Media: CollectionConfig = {
             try {
               const driveFile = await uploadFileToGoogleDrive({
                 data: sourceFileData,
+                description: `Photo credit: ${photoCredit}`,
                 folderId: mediaData.googleDriveFolderId,
                 mimeType: req.file.mimetype,
                 name: result.filename || req.file.name,
+                photoCredit,
               })
 
               const updatedResult = await req.payload.update({
@@ -407,8 +586,10 @@ export const Media: CollectionConfig = {
           contact: result.contact,
           photoCredit: result.photoCredit,
           publications: result.publications,
+          albumName: result.albumName,
           files: results.map((createdMedia) => ({
             id: createdMedia.id,
+            albumName: createdMedia.albumName,
             filename: createdMedia.filename,
             publications: createdMedia.publications,
             url: createdMedia.url,
@@ -515,6 +696,11 @@ export const Media: CollectionConfig = {
       name: 'photoCredit',
       type: 'text',
       label: 'Photo credit',
+    },
+    {
+      name: 'albumName',
+      type: 'text',
+      label: 'Album',
     },
     {
       name: 'contact',
