@@ -134,6 +134,10 @@ export interface UserAuthOperations {
  */
 export interface User {
   id: number;
+  /**
+   * Send this user an email whenever a new file is uploaded.
+   */
+  notifyOnUploads?: boolean | null;
   updatedAt: string;
   createdAt: string;
   email: string;
@@ -329,6 +333,7 @@ export interface PayloadMigration {
  * via the `definition` "users_select".
  */
 export interface UsersSelect<T extends boolean = true> {
+  notifyOnUploads?: T;
   updatedAt?: T;
   createdAt?: T;
   email?: T;

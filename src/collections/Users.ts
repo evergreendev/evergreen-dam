@@ -28,7 +28,9 @@ export const Users: CollectionConfig = {
   admin: {
     components: {
       edit: {
-        beforeDocumentControls: ['/components/SendPasswordSetEmailButton#SendPasswordSetEmailButton'],
+        beforeDocumentControls: [
+          '/components/SendPasswordSetEmailButton#SendPasswordSetEmailButton',
+        ],
       },
     },
     useAsTitle: 'email',
@@ -84,7 +86,14 @@ export const Users: CollectionConfig = {
     },
   ],
   fields: [
-    // Email added by default
-    // Add more fields as needed
+    {
+      name: 'notifyOnUploads',
+      type: 'checkbox',
+      label: 'Notify on uploads',
+      defaultValue: false,
+      admin: {
+        description: 'Send this user an email whenever a new file is uploaded.',
+      },
+    },
   ],
 }

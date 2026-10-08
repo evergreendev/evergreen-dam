@@ -4,6 +4,7 @@ import { addDataAndFileToRequest, type CollectionConfig, type PayloadRequest } f
 
 import type { Media as MediaType } from '@/payload-types'
 import { createZip } from '@/util/createZip'
+import { notifyOnMediaCreate, notifyUpload } from '@/util/notifyUpload'
 import {
   findOrCreateGoogleDriveFolder,
   isGoogleDriveUploadConfigured,
@@ -254,6 +255,9 @@ const sleep = (delayMS: number) => new Promise((resolve) => setTimeout(resolve, 
 
 export const Media: CollectionConfig = {
   slug: 'media',
+  hooks: {
+    afterChange: [notifyOnMediaCreate],
+  },
   access: {
     create: ({ req }) => Boolean(req.user),
     delete: ({ req }) => Boolean(req.user),
@@ -480,6 +484,7 @@ export const Media: CollectionConfig = {
             try {
               result = await req.payload.create({
                 collection: 'media',
+                context: { skipUploadNotification: true },
                 data: {
                   ...baseData,
                   ...(mediaData.folder ? { folder: mediaData.folder } : {}),
@@ -578,6 +583,7 @@ export const Media: CollectionConfig = {
         }
 
         const [result] = results
+        await notifyUpload(result, req)
 
         return Response.json({
           id: result.id,
